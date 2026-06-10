@@ -31,6 +31,12 @@ actor FullResDecoder {
 final class ImageCanvasView: NSView {
     private let embeddedLayer = CALayer()
     private let fullLayer = CALayer()
+    /// Autofocus frame outline, drawn on top of both image layers.
+    private let focusLayer = CALayer()
+    private var focusInfo: SonyFocusInfo?
+    /// The canvas lives at native pixel size and is scaled down by the scroll
+    /// view's magnification — divide by it so the outline stays ~2 pt on screen.
+    private var focusScale: CGFloat = 1
 
     init() {
         super.init(frame: .zero)
@@ -42,6 +48,10 @@ final class ImageCanvasView: NSView {
             sublayer.isOpaque = true
             layer?.addSublayer(sublayer)
         }
+        focusLayer.borderColor = NSColor.systemGreen.cgColor
+        focusLayer.zPosition = 2
+        focusLayer.isHidden = true
+        layer?.addSublayer(focusLayer)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -51,6 +61,7 @@ final class ImageCanvasView: NSView {
         withoutAnimation {
             embeddedLayer.frame = bounds
             fullLayer.frame = bounds
+            layoutFocusLayer()
         }
     }
 
@@ -58,7 +69,43 @@ final class ImageCanvasView: NSView {
         withoutAnimation {
             embeddedLayer.contents = nil
             fullLayer.contents = nil
+            focusInfo = nil
+            focusLayer.isHidden = true
         }
+    }
+
+    // MARK: - Focus point overlay
+
+    func setFocus(_ info: SonyFocusInfo?, visible: Bool) {
+        focusInfo = info
+        withoutAnimation {
+            focusLayer.isHidden = !(visible && info != nil)
+            layoutFocusLayer()
+        }
+    }
+
+    func setFocusVisible(_ visible: Bool) {
+        withoutAnimation { focusLayer.isHidden = !(visible && focusInfo != nil) }
+    }
+
+    /// Call whenever the scroll view's magnification changes.
+    func setFocusScale(_ magnification: CGFloat) {
+        let scale = max(magnification, 0.001)
+        guard abs(scale - focusScale) > 0.0001 else { return }
+        focusScale = scale
+        withoutAnimation { layoutFocusLayer() }
+    }
+
+    private func layoutFocusLayer() {
+        guard let info = focusInfo, bounds.width > 0, bounds.height > 0 else { return }
+        // Normalized coords use a top-left origin; the view is bottom-left.
+        let w = info.size.width * bounds.width
+        let h = info.size.height * bounds.height
+        focusLayer.frame = CGRect(x: info.center.x * bounds.width - w / 2,
+                                  y: (1 - info.center.y) * bounds.height - h / 2,
+                                  width: w, height: h)
+        focusLayer.borderWidth = 2 / focusScale
+        focusLayer.cornerRadius = 3 / focusScale
     }
 
     func setEmbedded(_ image: CGImage) {
@@ -105,6 +152,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private let spinner = NSProgressIndicator()
     /// Single status chip, always bottom-left: "Preview" / "Loading…" / "Full".
     private let statusButton = NSButton()
+    /// Toggles the autofocus-point overlay; hidden when the file has no AF data.
+    private let afButton = NSButton()
     private static let decoder = FullResDecoder()
 
     private var currentURL: URL?
@@ -112,6 +161,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private var state: LoadState = .preview
     private var hasEmbedded = false
     private var hasFull = false
+    private var focusInfo: SonyFocusInfo?
+    private var showFocus = true
 
     /// True while the image is fit-to-window (so we refit on resize). Cleared once
     /// the user zooms/pans (detected via live-scroll/live-magnify, which only fire
@@ -146,6 +197,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         root.addSubview(scrollView)
 
         configureStatusButton(); root.addSubview(statusButton)
+        configureAFButton(); root.addSubview(afButton)
 
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -162,7 +214,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             statusButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             statusButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
 
-            spinner.leadingAnchor.constraint(equalTo: statusButton.trailingAnchor, constant: 8),
+            afButton.leadingAnchor.constraint(equalTo: statusButton.trailingAnchor, constant: 8),
+            afButton.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
+
+            spinner.leadingAnchor.constraint(equalTo: afButton.trailingAnchor, constant: 8),
             spinner.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
         ])
 
@@ -172,6 +227,12 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(userInteracted),
             name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
+        // Keeps the focus outline at a constant on-screen width across zoom
+        // changes from any source (pinch, smart magnify, programmatic).
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(clipBoundsChanged),
+            name: NSView.boundsDidChangeNotification, object: clip)
 
         view = root
     }
@@ -188,6 +249,35 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         statusButton.action = #selector(chipClicked)
         statusButton.translatesAutoresizingMaskIntoConstraints = false
         setState(.preview)
+    }
+
+    private func configureAFButton() {
+        afButton.bezelStyle = .badge
+        afButton.controlSize = .small
+        afButton.font = .systemFont(ofSize: 10, weight: .semibold)
+        afButton.title = "AF"
+        afButton.target = self
+        afButton.action = #selector(afClicked)
+        afButton.isHidden = true
+        afButton.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    /// Reflect the overlay state in the chip (dimmed = overlay off).
+    private func updateAFButton() {
+        afButton.isHidden = focusInfo == nil
+        afButton.alphaValue = showFocus ? 1.0 : 0.45
+        afButton.toolTip = showFocus ? "Hide focus point" : "Show focus point"
+    }
+
+    @objc private func afClicked() {
+        showFocus.toggle()
+        SharedSettings.showFocusPoint = showFocus
+        canvas.setFocusVisible(showFocus)
+        updateAFButton()
+    }
+
+    @objc private func clipBoundsChanged() {
+        canvas.setFocusScale(scrollView.magnification)
     }
 
     /// The chip stays enabled in every state — a disabled NSButton lets the
@@ -222,10 +312,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         isFitted = true
         hasEmbedded = false
         hasFull = false
+        focusInfo = nil
         canvas.reset()
+        updateAFButton()
         setState(.preview)
 
         let px = targetPixelSize()
+        async let focusTask = Task.detached(priority: .userInitiated) {
+            SonyFocusInfo.read(url: url)
+        }.value
         if let preview = await detachedDecode({ ARWImageLoader.embeddedPreview(url: url, maxPixelSize: px) }),
            currentURL == url {
             hasEmbedded = true
@@ -233,6 +328,13 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             canvas.frame = NSRect(x: 0, y: 0, width: preview.width, height: preview.height)
             canvas.setEmbedded(preview)
             fitAndCenter()
+        }
+
+        if let focus = await focusTask, currentURL == url {
+            focusInfo = focus
+            showFocus = SharedSettings.showFocusPoint
+            canvas.setFocus(focus, visible: showFocus)
+            updateAFButton()
         }
 
         // Full resolution starts right away — only rapid flipping stays on the
@@ -263,6 +365,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             canvas.scroll(NSPoint(x: fracX * size.width - newVis.width / 2,
                                   y: fracY * size.height - newVis.height / 2))
             canvas.showFull(true)
+            canvas.setFocusScale(scrollView.magnification)
             return
         }
 
@@ -287,6 +390,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         let vis = scrollView.contentView.documentVisibleRect
         canvas.scroll(NSPoint(x: (doc.width - vis.width) / 2,
                               y: (doc.height - vis.height) / 2))
+        canvas.setFocusScale(fit)
         isFitted = true
     }
 

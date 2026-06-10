@@ -6,5 +6,10 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>
+	<!-- Shared settings plist (app group containers prompt repeatedly with ad-hoc signing). -->
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+	<array>
+		<string>/Library/Application Support/ARWQuickLook/</string>
+	</array>
 </dict>
 </plist>

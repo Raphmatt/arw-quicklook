@@ -25,6 +25,7 @@ targets:
     platform: macOS
     sources:
       - Sources/App
+      - path: Sources/Shared/SharedSettings.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.raphmatt.arwquicklook
