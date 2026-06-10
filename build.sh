@@ -28,6 +28,9 @@ cp -R "$BUILT" "${INSTALL_DIR}/"
 
 echo "▶︎ Registering with Launch Services + pluginkit…"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+# Unregister the build product first — otherwise it shows up as a duplicate
+# app entry in System Settings › Login Items & Extensions.
+"$LSREGISTER" -u "$(pwd)/${BUILT}" 2>/dev/null || true
 "$LSREGISTER" -f "${INSTALL_DIR}/${APP_NAME}.app"
 pluginkit -a "${INSTALL_DIR}/${APP_NAME}.app/Contents/PlugIns/ARWThumbnail.appex" 2>/dev/null || true
 pluginkit -a "${INSTALL_DIR}/${APP_NAME}.app/Contents/PlugIns/ARWPreview.appex" 2>/dev/null || true
