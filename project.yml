@@ -1,0 +1,61 @@
+name: ARWQuickLook
+options:
+  bundleIdPrefix: io.github.raphmatt.arwquicklook
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # Ad-hoc signing: loads locally without an Apple Developer team.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGNING_REQUIRED: "YES"
+    CODE_SIGNING_ALLOWED: "YES"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: "NO"
+
+targets:
+  ARWQuickLook:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.raphmatt.arwquicklook
+        INFOPLIST_FILE: Support/App-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/App.entitlements
+    dependencies:
+      - target: ARWThumbnail
+        embed: true
+      - target: ARWPreview
+        embed: true
+
+  ARWThumbnail:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Sources/Thumbnail
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.raphmatt.arwquicklook.thumbnail
+        INFOPLIST_FILE: Support/Thumbnail-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/Thumbnail.entitlements
+
+  ARWPreview:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Sources/Preview
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.raphmatt.arwquicklook.preview
+        INFOPLIST_FILE: Support/Preview-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/Preview.entitlements

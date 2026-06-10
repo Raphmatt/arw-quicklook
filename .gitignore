@@ -1,0 +1,13 @@
+# XcodeGen output
+ARWQuickLook.xcodeproj/
+
+# Build artifacts
+build/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
