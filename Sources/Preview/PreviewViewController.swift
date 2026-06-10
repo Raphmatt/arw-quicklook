@@ -1,4 +1,5 @@
 import Cocoa
+import IOSurface
 import Quartz // QLPreviewingController
 
 /// Clip view that keeps the document centered when it's smaller than the viewport
@@ -18,17 +19,15 @@ final class CenteringClipView: NSClipView {
 /// A queued decode whose task was cancelled while waiting (user moved to another
 /// image) bails out before doing any work.
 actor FullResDecoder {
-    func decode(url: URL) throws -> CGImage? {
+    func decode(url: URL) throws -> IOSurface? {
         try Task.checkCancellation()
         return ARWImageLoader.fullDecode(url: url)
     }
 }
 
 /// Document view holding the embedded preview and the full-resolution image as
-/// two GPU-resident sublayers. Both layers stay visible in the render tree at
-/// all times — Core Animation drops the texture of a hidden layer, so toggling
-/// via `isHidden` re-uploads ~131 MB on every flip. Flipping `zPosition`
-/// instead keeps both textures resident and switches instantly.
+/// two sublayers. Both stay visible in the render tree (Core Animation drops
+/// the texture of a hidden layer); toggling flips their stacking order.
 final class ImageCanvasView: NSView {
     private let embeddedLayer = CALayer()
     private let fullLayer = CALayer()
@@ -70,14 +69,11 @@ final class ImageCanvasView: NSView {
         }
     }
 
-    /// Installs the full-res texture *behind* the embedded layer — it uploads
-    /// to the GPU now (during the visible "Loading…" phase), so the later
-    /// flip to front has nothing left to do.
-    func setFull(_ image: CGImage) {
-        withoutAnimation { fullLayer.contents = image }
+    /// Installs the full-res IOSurface behind the embedded layer.
+    func setFull(_ surface: IOSurface) {
+        withoutAnimation { fullLayer.contents = surface }
     }
 
-    /// Instant toggle: both textures stay uploaded; only stacking order flips.
     func showFull(_ full: Bool) {
         withoutAnimation {
             fullLayer.zPosition = full ? 1 : 0
@@ -97,10 +93,10 @@ final class ImageCanvasView: NSView {
 ///
 /// - Embedded preview shown instantly (~20 ms warm), fit to the panel.
 /// - Full-resolution decode starts immediately in the background and swaps in
-///   **without changing the framing** (same zoom/scroll — it just gets sharper).
+///   without changing the framing (same zoom/scroll — it just gets sharper).
 ///   Moving to another image cancels it; only rapid flipping stays on embedded.
 /// - The status chip (bottom left) names what's on screen and toggles between
-///   the cached embedded and full versions instantly.
+///   the cached embedded and full versions.
 /// - Pinch / double-tap to zoom, free two-finger panning — like Preview.app.
 final class PreviewViewController: NSViewController, QLPreviewingController {
 
@@ -248,8 +244,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     /// Install the full-res image and make it visible, preserving the user's
     /// framing if they have zoomed/panned (same spot, just sharper).
-    private func attachFull(_ cg: CGImage) {
-        let size = NSSize(width: cg.width, height: cg.height)
+    private func attachFull(_ surface: IOSurface) {
+        let size = NSSize(width: surface.width, height: surface.height)
 
         if !isFitted, canvas.frame.width > 0 {
             let oldW = canvas.frame.width, oldH = canvas.frame.height
@@ -257,7 +253,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             let fracX = vis.midX / oldW, fracY = vis.midY / oldH
             let oldMag = scrollView.magnification
 
-            canvas.setFull(cg)
+            canvas.setFull(surface)
             canvas.frame = NSRect(origin: .zero, size: size)
             // Lower the floor first — magnification values shrink with the larger
             // image, and setting magnification below the old floor would clamp.
@@ -270,7 +266,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             return
         }
 
-        canvas.setFull(cg)
+        canvas.setFull(surface)
         canvas.frame = NSRect(origin: .zero, size: size)
         canvas.showFull(true)
         fitAndCenter()
@@ -314,8 +310,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         }
     }
 
-    /// Toggle between embedded and full resolution; both stay uploaded as
-    /// layers, so flipping is a compositor visibility change — instant.
+    /// Toggle between the cached embedded and full-resolution versions.
     @objc private func chipClicked() {
         switch state {
         case .loading:

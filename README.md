@@ -12,7 +12,7 @@ the framing — moving to another image cancels it.
 | Path | Method | Measured (A7 IV, 33 MP) |
 |------|--------|-------------------------|
 | Preview (instant) | `CGImageSourceCreateThumbnailAtIndex` → embedded JPEG (1616 px) | ~20 ms (first image ~240 ms, one-time codec load) |
-| Full resolution (background) | `CIRAWFilter` (GPU), `deferred: false` | ~130 ms warm |
+| Full resolution (background) | `CIRAWFilter` (GPU) → IOSurface | ~560 ms warm |
 
 Flow in the preview panel (`PreviewViewController`):
 
@@ -21,11 +21,16 @@ Flow in the preview panel (`PreviewViewController`):
 3. Swap the sharp image in — same zoom/scroll position, it just gets sharper.
 4. Moving to another image cancels the pending decode (decodes are serialized
    through an actor; a queued decode whose task was cancelled never starts).
-5. The status chip (bottom left) shows Preview / Loading… / Full; clicking
-   "Preview" forces the full decode immediately.
+5. The status chip (bottom left) names what's on screen (Preview / Loading… /
+   Full) and toggles between the cached embedded and full versions on click.
 
 Zoom and pan like Preview.app: pinch to zoom (floor = fit-to-window, so no
 letterbox borders), free two-finger panning in any direction.
+
+The full-res render is nudged toward Sony's in-camera look (the embedded JPEG):
+`lookExposure` / `lookShadowBoost` in `ARWImageLoader.swift`. Apple's RAW engine
+only honors white balance from the file's metadata and ignores Sony's Creative
+Look / DRO settings, so its neutral default renders darker than the camera JPEG.
 
 ## Build & install
 
