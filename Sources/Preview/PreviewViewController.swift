@@ -464,10 +464,20 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         await Task.detached(priority: .userInitiated, operation: work).value
     }
 
+    /// Size the panel to fill the screen at the image's aspect ratio, like the
+    /// native Quick Look does for JPEGs. `aspectFit` is the wrong tool here — it
+    /// never upscales, so it would leave the window at the embedded preview's
+    /// ~1616 px and waste most of the screen. Scale up to the screen instead.
     private func setPreferredSize(aspect: CGSize) {
         guard aspect.width > 0, aspect.height > 0 else { return }
-        let fitted = ARWImageLoader.aspectFit(aspect, into: NSSize(width: 1400, height: 1000))
-        preferredContentSize = fitted
+        let screen = view.window?.screen ?? NSScreen.main
+        // visibleFrame excludes the menu bar / Dock; the ~0.92 leaves the small
+        // margin the native preview keeps around the image.
+        let bound = (screen?.visibleFrame.size ?? NSSize(width: 1680, height: 1050))
+        let target = NSSize(width: bound.width * 0.92, height: bound.height * 0.92)
+        let scale = min(target.width / aspect.width, target.height / aspect.height)
+        preferredContentSize = NSSize(width: (aspect.width * scale).rounded(),
+                                      height: (aspect.height * scale).rounded())
     }
 
     private func targetPixelSize() -> Int {
