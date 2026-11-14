@@ -201,9 +201,11 @@ Claude Code:
   the app and both extensions, and the thumbnail and window-size fixes.
 - **Claude Fable 5:** the speed work on the preview, the focus point overlay, the
   shared settings and the Launch Services fix in the build script.
-- **Claude Opus 5.5:** the full-size embedded JPEG path, the glass controls, the
-  AF area modes and the loading fixes.
-- **Claude Fable 5.2:** a review of the code and the preview's controls.
+- **Claude Opus 5.5:** the full-size embedded JPEG path, rendering at display
+  resolution, the preview controls, the AF area modes, the loading fixes and
+  the docs.
+- **Claude Fable 5.2:** a review of the code and the preview's controls, and the
+  plan for the display-resolution rendering and the new controls.
 
 Testing with my own camera files and all decisions were done by me.
 
