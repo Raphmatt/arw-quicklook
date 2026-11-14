@@ -32,8 +32,15 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 # app entry in System Settings › Login Items & Extensions.
 "$LSREGISTER" -u "$(pwd)/${BUILT}" 2>/dev/null || true
 "$LSREGISTER" -f "${INSTALL_DIR}/${APP_NAME}.app"
-pluginkit -a "${INSTALL_DIR}/${APP_NAME}.app/Contents/PlugIns/ARWThumbnail.appex" 2>/dev/null || true
-pluginkit -a "${INSTALL_DIR}/${APP_NAME}.app/Contents/PlugIns/ARWPreview.appex" 2>/dev/null || true
+for EXT in ARWThumbnail ARWPreview; do
+  APPEX="${INSTALL_DIR}/${APP_NAME}.app/Contents/PlugIns/${EXT}.appex"
+  pluginkit -a "$APPEX" 2>/dev/null || true
+  # Switch it on — the same as the toggle in System Settings › Login Items &
+  # Extensions › Quick Look. A new bundle ID otherwise starts disabled and Quick
+  # Look reports "Extension … not found".
+  EXT_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "${APPEX}/Contents/Info.plist")
+  pluginkit -e use -i "$EXT_ID" 2>/dev/null || echo "  (could not enable ${EXT} — turn it on in System Settings)"
+done
 
 echo "▶︎ Resetting Quick Look…"
 qlmanage -r >/dev/null 2>&1 || true
@@ -47,13 +54,12 @@ cat <<'EOF'
 
 ✓ Installed.
 
-Next:
-  1. Enable both extensions:
-     System Settings › General › Login Items & Extensions › Quick Look
-     (toggle ARWThumbnail + ARWPreview ON)
-  2. In Finder, select a .ARW and press Space.
+Both extensions are registered and enabled. In Finder, select a .ARW and
+press Space.
 
-Verify which generator handles ARW:
-  pluginkit -m -p com.apple.quicklook.preview   | grep -i arw
-  qlmanage -p "/path/to/photo.ARW"
+If the preview doesn't appear, check that both are on (+ = enabled):
+  pluginkit -mAvv | grep -i -A1 "arwquicklook\."
+or turn on ARWThumbnail + ARWPreview in
+  System Settings › General › Login Items & Extensions › Quick Look
 EOF
+pluginkit -mAvv 2>/dev/null | grep -i "arwquicklook\." || true

@@ -119,8 +119,8 @@ make install
 ```
 
 This runs `build.sh`, which generates the project, builds (ad-hoc signed, no
-Apple Developer account needed), installs to `/Applications`, registers the
-extensions, and resets Quick Look.
+Apple Developer account needed), installs to `/Applications`, registers and
+enables both extensions, and resets Quick Look.
 
 Other targets (`make` lists them):
 
@@ -131,9 +131,9 @@ Other targets (`make` lists them):
 | `make reset`     | Reset Quick Look's generators and cache                  |
 | `make clean`     | Remove build output and the generated Xcode project      |
 
-Then **enable both extensions**:
-System Settings › General › Login Items & Extensions › **Quick Look** →
-turn on `ARWThumbnail` and `ARWPreview`.
+If Quick Look still says "Extension … not found", an extension is disabled:
+turn on `ARWThumbnail` and `ARWPreview` under System Settings › General ›
+Login Items & Extensions › **Quick Look**.
 
 ## Layout
 

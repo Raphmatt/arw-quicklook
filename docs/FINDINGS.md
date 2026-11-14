@@ -189,7 +189,7 @@ Library scan of 4,053 ARWs:
 
 - **Settings sharing.** App Groups were avoided: with ad-hoc signing, macOS 15+ re-prompts for group-container access on every rebuild (*source:* mjtsai.com, Eclectic Light; not tried here). Instead a plist in `~/Library/Application Support/ARWQuickLook/` is shared through `com.apple.security.temporary-exception.files.home-relative-path.read-write`. Only the App and Preview targets carry it; the Thumbnail target has none.
 - **Duplicate entry in System Settings.** Launch Services also registered the build product inside the project's `build/` folder, so Login Items & Extensions listed the app twice. `build.sh` now runs `lsregister -u` on the build product (2dab24a); `make build` keeps it out too. Two "Quick Look" labels per row are normal: one per extension.
-- **Bundle IDs** moved to `io.github.raphmatt.arwquicklook*`. The extensions must be re-enabled after that change.
+- **Bundle IDs** moved to `io.github.raphmatt.arwquicklook*`. A new ID registers disabled, and Quick Look then shows "Extension io.github.raphmatt.arwquicklook.preview not found" (seen 2026-11-14). `build.sh` now enables both with `pluginkit -e use -i <id>`, the same as the System Settings toggle.
 - **Signing.** Ad-hoc only, so the build loads on the building Mac only. No prebuilt download: Gatekeeper would block it, and notarisation needs a paid Developer ID.
 
 ## 7. Learnings

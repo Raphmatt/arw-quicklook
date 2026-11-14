@@ -32,7 +32,7 @@ XcodeGen project (`project.yml`): a host app plus two app extensions, Swift 5 mo
 - **Never render more pixels than the panel shows.** Upgrade on zoom-in or resize, never downgrade while visible, free on close.
 - **Every read from an ARW is bounds-checked** (untrusted input in a sandboxed extension). Cap value counts and IFD chain length, and guard against cycles.
 - **Settings are shared through the plist, not App Groups.** With ad-hoc signing, macOS 15+ re-prompts for group containers on every rebuild. The App and Preview targets carry a temporary-exception for that folder; Thumbnail needs none.
-- **Bundle IDs are `io.github.raphmatt.arwquicklook*`.** Changing them means re-enabling both extensions in System Settings.
+- **Bundle IDs are `io.github.raphmatt.arwquicklook*`.** A new ID starts disabled ("Extension … not found"); `build.sh` enables both with `pluginkit -e use`.
 
 ## Verified facts (macOS 27.2, Sony A7 IV, 2026-11-14)
 
