@@ -4,7 +4,7 @@
 # `version` and `sha256` are updated by the release workflow on every tag.
 cask "arw-quicklook" do
   version "1.0.0"
-  sha256 :no_check # replaced with the real checksum by the release workflow
+  sha256 "d47253a205df42532d6110b1f63ad75da31a02670a32f4fc41e0442b004595ba"
 
   url "https://github.com/Raphmatt/arw-quicklook/releases/download/v#{version}/ARWQuickLook-#{version}.zip"
   name "ARW QuickLook"
