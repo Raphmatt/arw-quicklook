@@ -13,10 +13,10 @@ the framing — moving to another image cancels it.
 
 ## How it works
 
-| Path                         | Method                                                              | Measured (A7 IV, 33 MP)                           |
-| ---------------------------- | ------------------------------------------------------------------- | ------------------------------------------------- |
-| Preview (instant)            | `CGImageSourceCreateThumbnailAtIndex` → embedded JPEG (1616 px)     | ~20 ms (first image ~240 ms, one-time codec load) |
-| Full resolution (background) | full-size camera JPEG from IFD2 (`JpgFromRaw`) → panel size → IOSurface | ~35 ms warm (M-size RAW: ~15 ms)                  |
+| Path                         | Method                                                                         | Measured (A7 IV, 33 MP)                           |
+| ---------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------- |
+| Preview (instant)            | `CGImageSourceCreateThumbnailAtIndex` → embedded JPEG (1616 px)                | ~20 ms (first image ~240 ms, one-time codec load) |
+| Full resolution (background) | full-size camera JPEG from IFD2 (`JpgFromRaw`) → panel size → IOSurface        | ~35 ms warm (M-size RAW: ~15 ms)                  |
 | Full resolution, fallback    | `CIRAWFilter` (GPU, `scaleFactor`) → IOSurface, files without a full-size JPEG | ~560–670 ms warm                                  |
 
 Newer Sony bodies (e.g. the A7 IV) store, besides the 1616 px preview, a
@@ -55,9 +55,9 @@ Flow in the preview panel (`PreviewViewController`):
    strength.
 
 Memory: a full image is 4 bytes per pixel, so the sensor-size render is
-131 MB at 33 MP (245 MB at 61 MP). Fitted on a 5K display the render is about
-69 MB, on a 14" MacBook Pro about 20 MB; the native size is only rendered when
-you zoom in that far.
+131 MB at 33 MP (245 MB at 61 MP). Fitted on a 5K display (a 3:2 photo is limited
+by the screen's height) the render is about 40 MB, on a 14" MacBook Pro about
+20 MB; the native size is only rendered when you zoom in that far.
 
 Zoom and pan like Preview.app: pinch to zoom (floor = fit-to-window, so no
 letterbox borders), free two-finger panning in any direction.
@@ -76,10 +76,10 @@ portrait shots.
 
 Points and areas are drawn differently:
 
-| Camera recorded                                           | Frame                                                     | Drawn as                 |
-| --------------------------------------------------------- | --------------------------------------------------------- | ------------------------ |
-| Wide, Spot, or a detected face/eye (`0x2021` Face/Eye AF) | square, fitted to the point / eye / face                  | solid green frame        |
-| Center, Zone, Flexible Spot                               | wide rectangle (e.g. 1073×808) — only the _area_ is known | white corner brackets    |
+| Camera recorded                                           | Frame                                                     | Drawn as                  |
+| --------------------------------------------------------- | --------------------------------------------------------- | ------------------------- |
+| Wide, Spot, or a detected face/eye (`0x2021` Face/Eye AF) | square, fitted to the point / eye / face                  | solid green frame         |
+| Center, Zone, Flexible Spot                               | wide rectangle (e.g. 1073×808) — only the _area_ is known | white corner brackets     |
 | Manual focus                                              | image centre (a fallback)                                 | nothing; AF button dimmed |
 
 The classification uses the frame's shape (areas are non-square, points are
@@ -121,12 +121,18 @@ This repository is also a Homebrew tap:
 
 ```sh
 brew tap raphmatt/arw-quicklook https://github.com/Raphmatt/arw-quicklook
-brew install --cask arw-quicklook
+brew install --cask raphmatt/arw-quicklook/arw-quicklook
 ```
 
+Homebrew 6 and later only load casks from third-party taps you trust; naming
+the cask in full, as above, trusts this one cask. (Or run
+`brew trust --cask raphmatt/arw-quicklook/arw-quicklook` first.)
+
 The cask removes the quarantine flag, registers the app and switches both
-Quick Look extensions on. `brew uninstall --cask arw-quicklook` removes it
-again (`--zap` also deletes the settings).
+Quick Look extensions on. Homebrew prints a deprecation warning for its
+`postflight` block: the sandboxed replacement can't register Quick Look
+extensions yet. `brew uninstall --cask arw-quicklook` removes it again
+(`--zap` also deletes the settings and sandbox containers).
 
 ### Download
 
@@ -144,7 +150,7 @@ again (`--zap` also deletes the settings).
 
 ### Build from source
 
-Needs Xcode and `brew install xcodegen`.
+Needs Xcode 26 or later (macOS 26 SDK) and `brew install xcodegen`.
 
 ```sh
 make install
@@ -156,13 +162,13 @@ enables both extensions, and resets Quick Look.
 
 Other targets (`make` lists them):
 
-| Target           | Does                                                              |
-| ---------------- | ----------------------------------------------------------------- |
-| `make build`     | Debug compile only, nothing signed or installed                   |
-| `make release`   | Universal (arm64 + x86_64), ad-hoc signed zip in `build/`         |
-| `make uninstall` | Remove the app from `/Applications` and reset Quick Look          |
-| `make reset`     | Reset Quick Look's generators and cache                           |
-| `make clean`     | Remove build output and the generated Xcode project               |
+| Target           | Does                                                      |
+| ---------------- | --------------------------------------------------------- |
+| `make build`     | Debug compile only, nothing signed or installed           |
+| `make release`   | Universal (arm64 + x86_64), ad-hoc signed zip in `build/` |
+| `make uninstall` | Remove the app from `/Applications` and reset Quick Look  |
+| `make reset`     | Reset Quick Look's generators and cache                   |
+| `make clean`     | Remove build output and the generated Xcode project       |
 
 If Quick Look says "Extension … not found", an extension is disabled: turn on
 `ARWThumbnail` and `ARWPreview` under System Settings › General › Login Items &
@@ -182,6 +188,8 @@ project.yml                          XcodeGen definition (app + 2 extensions)
 Makefile, build.sh                   build / release / install / uninstall shortcuts
 .github/workflows/build.yml          CI build; tags publish a release + update the cask
 Casks/arw-quicklook.rb               Homebrew cask (this repo is a tap)
+docs/FINDINGS.md                     how it was built: measurements, dead ends, learnings
+CLAUDE.md                            notes for AI coding agents working on the repo
 Sources/Shared/ARWImageLoader.swift  embedded preview + full-size JPEG / raw decode
 Sources/Shared/SonyFocusReader.swift focus point from the Sony MakerNote + TIFF reader
 Sources/Shared/SharedSettings.swift  app ↔ extension settings (shared plist)

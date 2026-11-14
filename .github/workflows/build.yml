@@ -10,8 +10,16 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # Not evaluated for tag pushes, so releases always build.
+    paths-ignore: &docs ["**.md", "docs/**", "LICENSE", "Casks/**"]
   pull_request:
+    paths-ignore: *docs
   workflow_dispatch:
+
+# A newer push supersedes a running branch/PR build; tag builds always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions:
   contents: read
@@ -19,14 +27,21 @@ permissions:
 jobs:
   build:
     runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      XCODEGEN_VERSION: 2.46.0
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
     steps:
       - uses: actions/checkout@v7
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen (pinned prebuilt, no Homebrew)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
 
       - name: Build release zip
         run: |
@@ -53,11 +68,14 @@ jobs:
           name: ARWQuickLook-${{ env.VERSION }}
           path: build/ARWQuickLook-${{ env.VERSION }}.zip
           if-no-files-found: error
+          compression-level: 0 # already a zip
 
+  # Separate job so only this short Linux job ever holds a write token.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
@@ -77,6 +95,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/*.zip \
             --title "ARW QuickLook ${GITHUB_REF_NAME#v}" --generate-notes
 
+      # Pushes made with GITHUB_TOKEN never trigger workflows, so no build loop.
       - name: Update Homebrew cask
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -85,4 +104,6 @@ jobs:
                  -e "s/^  sha256 .*/  sha256 \"${SHA}\"/" Casks/arw-quicklook.rb
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "cask: arw-quicklook ${VERSION}" && git push origin main || echo "cask unchanged"
+          git diff --quiet && { echo "cask unchanged"; exit 0; }
+          git commit -am "cask: arw-quicklook ${VERSION}"
+          git push origin main
