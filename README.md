@@ -196,6 +196,7 @@ Sources/Shared/SharedSettings.swift  app ↔ extension settings (shared plist)
 Sources/Thumbnail/                   QLThumbnailProvider (Finder icons)
 Sources/Preview/                     QLPreviewingController (spacebar preview)
 Sources/App/                         host app with Settings window
+Support/AppIcon.svg                  app icon master (rendered into Support/Assets.xcassets)
 Support/*.plist, *.entitlements      extension configuration & sandbox
 ```
 

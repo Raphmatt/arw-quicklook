@@ -26,11 +26,13 @@ targets:
     sources:
       - Sources/App
       - path: Sources/Shared/SharedSettings.swift
+      - Support/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.raphmatt.arwquicklook
         INFOPLIST_FILE: Support/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Support/App.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: ARWThumbnail
         embed: true

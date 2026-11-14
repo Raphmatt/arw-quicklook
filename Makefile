@@ -12,7 +12,7 @@ ZIP := $(DERIVED)/$(APP)-$(VERSION).zip
 RELEASE_FAST := DEBUG_INFORMATION_FORMAT=dwarf SWIFT_ENABLE_EXPLICIT_MODULES=NO
 
 .DEFAULT_GOAL := help
-.PHONY: help generate build release install uninstall reset clean
+.PHONY: help generate icon build release install uninstall reset clean
 
 help: ## List the targets
 	@grep -E '^[a-z]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-10s %s\n", $$1, $$2}'
@@ -20,6 +20,15 @@ help: ## List the targets
 generate: ## Generate the Xcode project from project.yml
 	@command -v xcodegen >/dev/null || { echo "xcodegen missing: brew install xcodegen"; exit 1; }
 	xcodegen generate
+
+ICONSET := Support/Assets.xcassets/AppIcon.appiconset
+
+icon: ## Render Support/AppIcon.svg into the AppIcon asset catalog (needs rsvg-convert)
+	@command -v rsvg-convert >/dev/null || { echo "rsvg-convert missing: brew install librsvg"; exit 1; }
+	for s in 16 32 128 256 512; do \
+		rsvg-convert -w $$s -h $$s Support/AppIcon.svg -o $(ICONSET)/icon_$${s}x$${s}.png; \
+		rsvg-convert -w $$((s*2)) -h $$((s*2)) Support/AppIcon.svg -o $(ICONSET)/icon_$${s}x$${s}@2x.png; \
+	done
 
 build: generate ## Compile a Debug build (no signing, nothing installed)
 	xcodebuild -project $(PROJECT) -scheme $(APP) -configuration Debug \

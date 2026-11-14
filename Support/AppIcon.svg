@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- ARW QuickLook app icon (master). Rendered to the AppIcon asset
+       catalog by `make icon`. "ARW" is Inter Black (SIL OFL 1.1) converted
+       to outlines, so rendering needs no installed font. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfbfc"/>
+      <stop offset="1" stop-color="#d9dde4"/>
+    </linearGradient>
+    <!-- The soft shadow macOS app icons carry in their artwork -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <!-- macOS icon grid: 824 px body, 100 px margin, ~22.5 % corner radius -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="185.5" fill="none" stroke="#000000" stroke-opacity="0.08"/>
+  <!-- Focus-frame corners; the bottom-right one is a magnifier (Quick Look) -->
+  <g fill="none" stroke="#1fa85a" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M330 280 H250 V360"/>
+    <path d="M694 280 H774 V360"/>
+    <path d="M330 744 H250 V664"/>
+    <circle cx="704" cy="676" r="58"/>
+    <path d="M746 718 L790 762"/>
+  </g>
+  <path fill="#1c1c1e" d="M296.9 575.0 339.8 446.9H388.0L431.4 575.0H391.1L376.8 525.3Q372.2 509.1 367.8 493.4Q363.4 477.6 359.3 460.6H368.9Q364.6 477.6 360.1 493.4Q355.7 509.1 350.8 525.3L336.0 575.0ZM328.9 553.9V526.4H399.4V553.9Z M436.2 575.0V446.9H490.6Q505.9 446.9 517.1 452.4Q528.3 457.8 534.3 467.8Q540.4 477.8 540.4 491.6Q540.4 504.9 534.1 514.6Q527.8 524.3 516.2 529.6Q504.6 534.9 488.7 534.9H458.2V507.2H488.0Q493.4 507.2 497.3 505.3Q501.2 503.3 503.4 499.8Q505.5 496.2 505.5 491.6Q505.5 486.9 503.4 483.4Q501.2 479.9 497.3 477.9Q493.4 476.0 488.0 476.0H472.0V575.0ZM507.1 575.0 479.3 516.9H515.8L544.3 575.0Z M578.4 575.0 544.5 446.9H583.3L593.6 496.6Q595.5 505.9 597.3 515.4Q599.0 524.8 600.7 534.1Q602.3 543.5 603.9 553.0H595.6Q597.4 543.5 599.2 534.1Q601.0 524.8 603.0 515.4Q604.9 505.9 607.1 496.6L618.4 446.9H653.1L664.5 496.6Q666.6 505.9 668.5 515.4Q670.5 524.8 672.3 534.1Q674.1 543.5 675.9 553.0H667.6Q669.2 543.5 670.8 534.1Q672.5 524.8 674.2 515.4Q676.0 505.9 677.9 496.6L688.2 446.9H727.0L693.1 575.0H653.8L639.3 515.8Q637.7 509.0 635.7 499.0Q633.8 489.0 630.5 474.6H641.0Q637.7 489.0 635.8 499.0Q634.0 509.0 632.2 515.8L617.7 575.0Z"/>
+</svg>

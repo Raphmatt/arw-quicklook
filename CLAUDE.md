@@ -24,6 +24,7 @@ XcodeGen project (`project.yml`): a host app plus two app extensions, Swift 5 mo
 - `Sources/Preview/ControlsCapsule.swift`: the bottom-left icon buttons (embedded/full, AF) and `PreviewRootView`, which reveals them on real pointer movement.
 - `Sources/Thumbnail/ThumbnailProvider.swift`: Finder icons from the embedded preview.
 - `Sources/App/ARWQuickLookApp.swift`: the host app with the Settings window.
+- `Support/AppIcon.svg`: the app icon master. `make icon` renders it into `Support/Assets.xcassets` (commit the PNGs; CI doesn't render). "ARW" is Inter Black (SIL OFL) as outlines.
 - Build and distribution:
   - `Makefile` and `build.sh` for local builds.
   - `.github/workflows/build.yml` for CI and releases.
