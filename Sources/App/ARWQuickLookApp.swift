@@ -41,6 +41,7 @@ struct ContentView: View {
 
 struct SettingsView: View {
     @State private var showFocusPoint = SharedSettings.showFocusPoint
+    @State private var showFocusZones = SharedSettings.showFocusZones
 
     var body: some View {
         Form {
@@ -48,14 +49,30 @@ struct SettingsView: View {
                 .onChange(of: showFocusPoint) { _, value in
                     SharedSettings.showFocusPoint = value
                 }
-            Text("Draws a green frame where the camera focused, read from the "
-                 + "Sony metadata in the file. Can also be toggled with the AF "
-                 + "chip in the Quick Look panel itself.")
+            Text("Draws a green frame where the camera focused (a picked point "
+                 + "or a detected face/eye), read from the Sony metadata in the "
+                 + "file. Can also be toggled with the AF chip in the Quick Look "
+                 + "panel itself.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Toggle("Show general AF areas", isOn: $showFocusZones)
+                .onChange(of: showFocusZones) { _, value in
+                    SharedSettings.showFocusZones = value
+                }
+                .disabled(!showFocusPoint)
+                .padding(.top, 8)
+            Text("For Center, Zone and Flexible Spot shots the camera only "
+                 + "records the area it focused within, not a point. These are "
+                 + "drawn as white corner brackets instead of a green frame.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
         .padding(20)
         .frame(width: 380)
-        .onAppear { showFocusPoint = SharedSettings.showFocusPoint }
+        .onAppear {
+            showFocusPoint = SharedSettings.showFocusPoint
+            showFocusZones = SharedSettings.showFocusZones
+        }
     }
 }

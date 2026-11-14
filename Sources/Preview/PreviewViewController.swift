@@ -31,9 +31,15 @@ actor FullResDecoder {
 final class ImageCanvasView: NSView {
     private let embeddedLayer = CALayer()
     private let fullLayer = CALayer()
-    /// Autofocus frame outline, drawn on top of both image layers.
+    /// Autofocus frame outline for a specific point / detected subject, drawn
+    /// on top of both image layers.
     private let focusLayer = CALayer()
+    /// Corner brackets for a general AF area (Center / Zone / Flexible Spot) —
+    /// visibly different from a point, like the camera's own zone display.
+    private let zoneLayer = CAShapeLayer()
     private var focusInfo: SonyFocusInfo?
+    private var focusVisible = false
+    private var zonesVisible = true
     /// The canvas lives at native pixel size and is scaled down by the scroll
     /// view's magnification — divide by it so the outline stays ~2 pt on screen.
     private var focusScale: CGFloat = 1
@@ -52,6 +58,16 @@ final class ImageCanvasView: NSView {
         focusLayer.zPosition = 2
         focusLayer.isHidden = true
         layer?.addSublayer(focusLayer)
+
+        zoneLayer.fillColor = nil
+        zoneLayer.strokeColor = NSColor.white.withAlphaComponent(0.9).cgColor
+        zoneLayer.lineCap = .round
+        zoneLayer.shadowColor = NSColor.black.cgColor
+        zoneLayer.shadowOpacity = 0.6
+        zoneLayer.shadowOffset = .zero
+        zoneLayer.zPosition = 2
+        zoneLayer.isHidden = true
+        layer?.addSublayer(zoneLayer)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -70,22 +86,32 @@ final class ImageCanvasView: NSView {
             embeddedLayer.contents = nil
             fullLayer.contents = nil
             focusInfo = nil
-            focusLayer.isHidden = true
+            updateFocusVisibility()
         }
     }
 
     // MARK: - Focus point overlay
 
-    func setFocus(_ info: SonyFocusInfo?, visible: Bool) {
+    func setFocus(_ info: SonyFocusInfo?, visible: Bool, showZones: Bool) {
         focusInfo = info
+        focusVisible = visible
+        zonesVisible = showZones
         withoutAnimation {
-            focusLayer.isHidden = !(visible && info != nil)
+            updateFocusVisibility()
             layoutFocusLayer()
         }
     }
 
     func setFocusVisible(_ visible: Bool) {
-        withoutAnimation { focusLayer.isHidden = !(visible && focusInfo != nil) }
+        focusVisible = visible
+        withoutAnimation { updateFocusVisibility() }
+    }
+
+    /// Point → green box; area → corner brackets (unless areas are switched off).
+    private func updateFocusVisibility() {
+        let info = focusVisible ? focusInfo.flatMap { $0.isManualFocus ? nil : $0 } : nil
+        focusLayer.isHidden = !(info.map { !$0.isZone } ?? false)
+        zoneLayer.isHidden = !(info.map { $0.isZone && zonesVisible } ?? false)
     }
 
     /// Call whenever the scroll view's magnification changes.
@@ -101,11 +127,32 @@ final class ImageCanvasView: NSView {
         // Normalized coords use a top-left origin; the view is bottom-left.
         let w = info.size.width * bounds.width
         let h = info.size.height * bounds.height
-        focusLayer.frame = CGRect(x: info.center.x * bounds.width - w / 2,
-                                  y: (1 - info.center.y) * bounds.height - h / 2,
-                                  width: w, height: h)
+        let rect = CGRect(x: info.center.x * bounds.width - w / 2,
+                          y: (1 - info.center.y) * bounds.height - h / 2,
+                          width: w, height: h)
+        focusLayer.frame = rect
         focusLayer.borderWidth = 2 / focusScale
         focusLayer.cornerRadius = 3 / focusScale
+
+        // Brackets: each corner's arms are 18 % of the shorter side.
+        zoneLayer.frame = rect
+        let arm = min(w, h) * 0.18
+        let r = CGRect(origin: .zero, size: rect.size)
+        let path = CGMutablePath()
+        let corners: [(CGPoint, CGFloat, CGFloat)] = [
+            (CGPoint(x: r.minX, y: r.minY), arm, arm),
+            (CGPoint(x: r.maxX, y: r.minY), -arm, arm),
+            (CGPoint(x: r.minX, y: r.maxY), arm, -arm),
+            (CGPoint(x: r.maxX, y: r.maxY), -arm, -arm),
+        ]
+        for (corner, dx, dy) in corners {
+            path.move(to: CGPoint(x: corner.x + dx, y: corner.y))
+            path.addLine(to: corner)
+            path.addLine(to: CGPoint(x: corner.x, y: corner.y + dy))
+        }
+        zoneLayer.path = path
+        zoneLayer.lineWidth = 2.5 / focusScale
+        zoneLayer.shadowRadius = 2 / focusScale
     }
 
     func setEmbedded(_ image: CGImage) {
@@ -149,8 +196,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     private let scrollView = NSScrollView()
     private let canvas = ImageCanvasView()
-    private let spinner = NSProgressIndicator()
-    /// Single status chip, always bottom-left: "Preview" / "Loading…" / "Full".
+    /// Status chip in the bottom-left controls capsule: "Preview" / "Full".
+    /// Deliberately no loading indicator — it flickered on every image.
     private let statusButton = NSButton()
     /// Toggles the autofocus-point overlay; hidden when the file has no AF data.
     private let afButton = NSButton()
@@ -158,6 +205,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     private var currentURL: URL?
     private var fullResTask: Task<Void, Never>?
+    /// Bumped on every start/cancel; only the decode holding the current value
+    /// may update the chip and canvas.
+    private var decodeGeneration = 0
     private var state: LoadState = .preview
     private var hasEmbedded = false
     private var hasFull = false
@@ -196,14 +246,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scrollView)
 
-        configureStatusButton(); root.addSubview(statusButton)
-        configureAFButton(); root.addSubview(afButton)
+        configureStatusButton()
+        configureAFButton()
 
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(spinner)
+        let pill = makeControlsPill(arrangedSubviews: [statusButton, afButton])
+        root.addSubview(pill)
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -211,14 +258,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             scrollView.topAnchor.constraint(equalTo: root.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            statusButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
-            statusButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
-
-            afButton.leadingAnchor.constraint(equalTo: statusButton.trailingAnchor, constant: 8),
-            afButton.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
-
-            spinner.leadingAnchor.constraint(equalTo: afButton.trailingAnchor, constant: 8),
-            spinner.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
+            pill.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            pill.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
         ])
 
         NotificationCenter.default.addObserver(
@@ -241,10 +282,62 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         case preview, loading, full
     }
 
+    /// Groups the controls on one capsule that stays legible over any photo, in
+    /// light and dark mode: the capsule is forced to the dark appearance and
+    /// tinted, so it is always white-on-dark, independent of the image
+    /// underneath. Liquid Glass on macOS 26+, a dark HUD blur before that.
+    private func makeControlsPill(arrangedSubviews: [NSView]) -> NSView {
+        let stack = NSStackView(views: arrangedSubviews)
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        stack.detachesHiddenViews = true // AF hidden → capsule shrinks
+
+        let pill: NSView
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 13
+            // Darkening tint so white text keeps contrast over bright skies/snow.
+            glass.tintColor = NSColor.black.withAlphaComponent(0.35)
+            glass.contentView = stack
+            pill = glass
+        } else {
+            let hud = NSVisualEffectView()
+            hud.material = .hudWindow
+            hud.blendingMode = .withinWindow
+            hud.state = .active
+            hud.wantsLayer = true
+            hud.layer?.cornerRadius = 13
+            hud.layer?.masksToBounds = true
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            hud.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: hud.leadingAnchor),
+                stack.trailingAnchor.constraint(equalTo: hud.trailingAnchor),
+                stack.topAnchor.constraint(equalTo: hud.topAnchor),
+                stack.bottomAnchor.constraint(equalTo: hud.bottomAnchor),
+            ])
+            pill = hud
+        }
+        // Dark appearance → white labels, regardless of the
+        // system light/dark setting.
+        pill.appearance = NSAppearance(named: .darkAqua)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        return pill
+    }
+
+    /// Borderless label-style button for use inside the controls capsule.
+    private func styleChip(_ button: NSButton) {
+        button.isBordered = false
+        button.font = .systemFont(ofSize: 11, weight: .semibold)
+        button.contentTintColor = .white
+        button.translatesAutoresizingMaskIntoConstraints = false
+    }
+
     private func configureStatusButton() {
-        statusButton.bezelStyle = .badge
-        statusButton.controlSize = .small
-        statusButton.font = .systemFont(ofSize: 10, weight: .semibold)
+        styleChip(statusButton)
         statusButton.target = self
         statusButton.action = #selector(chipClicked)
         statusButton.translatesAutoresizingMaskIntoConstraints = false
@@ -252,9 +345,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     private func configureAFButton() {
-        afButton.bezelStyle = .badge
-        afButton.controlSize = .small
-        afButton.font = .systemFont(ofSize: 10, weight: .semibold)
+        styleChip(afButton)
         afButton.title = "AF"
         afButton.target = self
         afButton.action = #selector(afClicked)
@@ -263,10 +354,20 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     /// Reflect the overlay state in the chip (dimmed = overlay off).
+    /// Chip reads e.g. "AF · Wide"; the tooltip adds focus mode and subject
+    /// detection ("AF-C · Wide · Face/Eye AF"). Dimmed = overlay off.
     private func updateAFButton() {
         afButton.isHidden = focusInfo == nil
+        if focusInfo?.isManualFocus == true {
+            afButton.title = "MF" // no frame drawn — nothing to toggle
+        } else {
+            afButton.title = focusInfo?.areaMode.map { "AF · \($0)" } ?? "AF"
+        }
         afButton.alphaValue = showFocus ? 1.0 : 0.45
-        afButton.toolTip = showFocus ? "Hide focus point" : "Show focus point"
+        let details = [focusInfo?.focusMode, focusInfo?.areaMode, focusInfo?.tracking]
+            .compactMap { $0 }.joined(separator: " · ")
+        let action = showFocus ? "Click to hide focus frame" : "Click to show focus frame"
+        afButton.toolTip = details.isEmpty ? action : "\(details)\n\(action)"
     }
 
     @objc private func afClicked() {
@@ -292,7 +393,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
                 ? "Click to show full resolution"
                 : "Click to load full resolution"
         case .loading:
-            statusButton.title = "Loading…"
+            statusButton.title = "Preview" // stays put while decoding — no flicker
             statusButton.toolTip = nil
         case .full:
             statusButton.title = "Full"
@@ -305,7 +406,12 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     func preparePreviewOfFile(at url: URL) async throws {
         // Quick Look may re-prepare the same file (e.g. window state changes).
         // Everything is already loaded — don't wipe the caches and re-decode.
-        if url == currentURL, hasEmbedded { return }
+        // If the panel was closed mid-decode (viewWillDisappear cancelled it),
+        // resume the full-resolution load instead of staying on the preview.
+        if url == currentURL, hasEmbedded {
+            if !hasFull, fullResTask == nil { startFullRes(for: url) }
+            return
+        }
 
         cancelFullRes()
         currentURL = url
@@ -333,7 +439,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         if let focus = await focusTask, currentURL == url {
             focusInfo = focus
             showFocus = SharedSettings.showFocusPoint
-            canvas.setFocus(focus, visible: showFocus)
+            canvas.setFocus(focus, visible: showFocus, showZones: SharedSettings.showFocusZones)
             updateAFButton()
         }
 
@@ -409,8 +515,11 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     // MARK: - Full resolution
 
     private func startFullRes(for url: URL) {
+        decodeGeneration &+= 1
+        let generation = decodeGeneration
+        setState(.loading)
         fullResTask = Task { [weak self] in
-            await self?.runFullDecode(url: url)
+            await self?.runFullDecode(url: url, generation: generation)
         }
     }
 
@@ -433,16 +542,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         }
     }
 
-    private func runFullDecode(url: URL) async {
-        spinner.startAnimation(nil)
-        setState(.loading)
-
+    private func runFullDecode(url: URL, generation: Int) async {
         // Serialized through the actor; throws (returns nil) if this task was
         // cancelled while waiting its turn or before the render started.
         let full = try? await Self.decoder.decode(url: url)
 
-        spinner.stopAnimation(nil)
-        guard !Task.isCancelled, currentURL == url else { return }
+        // A superseded decode (cancelled, or a newer one started meanwhile)
+        // must not touch the UI — it would flip the chip under a newer decode.
+        // cancelFullRes() already restored the state for it.
+        guard generation == decodeGeneration, !Task.isCancelled, currentURL == url else { return }
         fullResTask = nil
         if let full {
             hasFull = true
@@ -453,10 +561,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         }
     }
 
+    /// Cancels a pending decode and leaves the UI consistent: the chip
+    /// never stays in the loading state (the cancelled task won't reset it itself).
     private func cancelFullRes() {
         fullResTask?.cancel()
         fullResTask = nil
+        decodeGeneration &+= 1
+        if state == .loading { setState(hasFull ? .full : .preview) }
     }
+
 
     // MARK: - Helpers
 

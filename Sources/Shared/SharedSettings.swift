@@ -22,6 +22,19 @@ enum SharedSettings {
         }
     }
 
+    private static let showFocusZonesKey = "showFocusZones"
+
+    /// Whether general AF *areas* (Center / Zone / Flexible Spot frames) are
+    /// drawn too. Off → only specific points and detected faces/eyes show.
+    static var showFocusZones: Bool {
+        get { (load()[showFocusZonesKey] as? Bool) ?? true }
+        set {
+            var values = load()
+            values[showFocusZonesKey] = newValue
+            save(values)
+        }
+    }
+
     // MARK: - Plist storage
 
     private static var settingsURL: URL? {

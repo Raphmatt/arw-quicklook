@@ -21,9 +21,42 @@ struct SonyFocusInfo {
     let center: CGPoint
     let size: CGSize
 
+    /// True when the frame is a general AF *area* (Center, Zone, Flexible Spot
+    /// M/L), not a specific point. Derived from the frame's shape: area frames
+    /// are wide rectangles (1073×808, 706×531, 745×594 on the A7 IV); points
+    /// the camera picked and detected faces/eyes are square (101…483 px).
+    /// The setting alone can't decide it: with Face/Eye AF on in Center mode,
+    /// the camera stores a square face box when it found one, else the zone.
+    let isZone: Bool
+    /// AF area mode as set on the camera (`0x201C`), e.g. "Wide", "Center".
+    let areaMode: String?
+    /// Focus mode (`0x201B`), e.g. "AF-C", "AF-S", "MF".
+    let focusMode: String?
+    /// Subject detection that was *enabled* (`0x2021`): "Face/Eye AF" or
+    /// "Lock-On AF". Whether it found a subject — and eye vs face — isn't
+    /// recorded; the frame then fits the eye or the face.
+    let tracking: String?
+
+    /// Manual focus: FocusLocation is then just the image centre (a fallback),
+    /// so no frame should be drawn.
+    var isManualFocus: Bool { focusMode == "MF" }
+
     /// Default frame when the file has no FocusFrameSize — matches the spot
     /// AF frame proportions seen on recent bodies (~2 % of the image width).
     private static let defaultFrameFraction: CGFloat = 0.022
+    /// Aspect deviation above which a frame counts as an area (square points
+    /// measure ≤ 2 %, area frames ≥ 20 %).
+    private static let zoneAspectThreshold: CGFloat = 0.08
+
+    // Sony value tables (ILCE/NEX), per ExifTool's Sony.pm.
+    private static let areaModes: [UInt8: String] = [
+        0: "Wide", 1: "Center", 3: "Flexible Spot", 4: "Flexible Spot",
+        9: "Center", 11: "Zone", 12: "Expanded Flexible Spot", 13: "Custom Area",
+    ]
+    private static let focusModes: [UInt8: String] = [
+        0: "MF", 2: "AF-S", 3: "AF-C", 4: "AF-A", 6: "DMF",
+    ]
+    private static let trackingModes: [UInt8: String] = [1: "Face/Eye AF", 2: "Lock-On AF"]
 
     // MARK: - Reading
 
@@ -60,29 +93,43 @@ struct SonyFocusInfo {
                 frame = CGSize(width: CGFloat(s[0]), height: CGFloat(s[1]))
             }
         }
+        let isZone = abs(frame.width - frame.height) / max(frame.width, frame.height)
+            > zoneAspectThreshold
+
+        func byte(_ tag: UInt16) -> UInt8? {
+            tiff.entry(in: sonyIFD, tag: tag).flatMap { tiff.payload($0).first }
+        }
+        let areaMode = byte(0x201C).flatMap { areaModes[$0] }
+        let focusMode = byte(0x201B).flatMap { focusModes[$0] }
+        let tracking = byte(0x2021).flatMap { trackingModes[$0] }
 
         // Normalize in the unrotated frame, then map into display orientation.
         let n = (x: x / w, y: y / h, fw: frame.width / w, fh: frame.height / h)
+        let center: CGPoint, size: CGSize
         switch orientation {
         case 3: // 180°
-            return SonyFocusInfo(center: CGPoint(x: 1 - n.x, y: 1 - n.y),
-                                 size: CGSize(width: n.fw, height: n.fh))
+            center = CGPoint(x: 1 - n.x, y: 1 - n.y); size = CGSize(width: n.fw, height: n.fh)
         case 6: // rotated 90° CW for display
-            return SonyFocusInfo(center: CGPoint(x: 1 - n.y, y: n.x),
-                                 size: CGSize(width: n.fh, height: n.fw))
+            center = CGPoint(x: 1 - n.y, y: n.x); size = CGSize(width: n.fh, height: n.fw)
         case 8: // rotated 90° CCW for display
-            return SonyFocusInfo(center: CGPoint(x: n.y, y: 1 - n.x),
-                                 size: CGSize(width: n.fh, height: n.fw))
+            center = CGPoint(x: n.y, y: 1 - n.x); size = CGSize(width: n.fh, height: n.fw)
         default: // 1 (and mirrored variants, which cameras don't write)
-            return SonyFocusInfo(center: CGPoint(x: n.x, y: n.y),
-                                 size: CGSize(width: n.fw, height: n.fh))
+            center = CGPoint(x: n.x, y: n.y); size = CGSize(width: n.fw, height: n.fh)
         }
+        return SonyFocusInfo(center: center, size: size, isZone: isZone,
+                             areaMode: areaMode, focusMode: focusMode, tracking: tracking)
     }
 }
 
 /// Minimal, bounds-checked TIFF/IFD walker (read-only, little- or big-endian).
-private struct TIFFReader {
+/// Shared by `SonyFocusReader` and `ARWImageLoader`; every read is bounds-checked
+/// because the input is an untrusted file.
+struct TIFFReader {
     let data: Data
+
+    /// Upper bound on values decoded from one entry. Real ARW entries hold a
+    /// handful; a crafted count of ~4 billion must not drive a long loop.
+    static let maxValues = 1024
 
     struct Entry {
         let tag: UInt16
@@ -135,6 +182,15 @@ private struct TIFFReader {
         return Int(offset)
     }
 
+    /// Offset of the IFD chained after `ifdOffset` (the 4-byte link after its
+    /// entries), or nil at the end of the chain.
+    func nextIFD(after ifdOffset: Int) -> Int? {
+        guard let count = uint16(at: ifdOffset),
+              let next = uint32(at: ifdOffset + 2 + Int(count) * 12),
+              next != 0 else { return nil }
+        return Int(next)
+    }
+
     /// Linear scan of one IFD for a tag (IFDs hold a few dozen entries at most).
     func entry(in ifdOffset: Int, tag: UInt16) -> Entry? {
         guard let count = uint16(at: ifdOffset) else { return nil }
@@ -154,8 +210,8 @@ private struct TIFFReader {
     private static let typeSizes: [UInt16: Int] = [1: 1, 2: 1, 3: 2, 4: 4, 7: 1]
 
     /// Resolves an entry's payload (inline if ≤ 4 bytes, via offset otherwise).
-    private func payload(_ e: Entry) -> [UInt8] {
-        let size = (Self.typeSizes[e.type] ?? 1) * Int(e.count)
+    func payload(_ e: Entry) -> [UInt8] {
+        let size = (Self.typeSizes[e.type] ?? 1) * min(Int(e.count), Self.maxValues)
         return size <= 4 ? bytes(at: e.entryOffset + 8, count: size)
                          : bytes(at: Int(e.valueOffset), count: size)
     }
@@ -173,7 +229,7 @@ private struct TIFFReader {
     func uint32Values(_ e: Entry) -> [UInt32] {
         if e.type == 3 { return uint16Values(e).map(UInt32.init) }
         var values: [UInt32] = []
-        for i in 0 ..< Int(e.count) {
+        for i in 0 ..< min(Int(e.count), Self.maxValues) {
             let off = Int(e.count) * 4 <= 4 ? e.entryOffset + 8 + i * 4 : Int(e.valueOffset) + i * 4
             guard let v = uint32(at: off) else { break }
             values.append(v)
