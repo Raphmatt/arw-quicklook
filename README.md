@@ -105,14 +105,46 @@ Look / DRO settings, so its neutral default renders darker than the camera JPEG.
 Files with a full-size embedded JPEG don't need this: they show the camera's
 own render.
 
-## Build & install
+## Install
 
-Requirements: macOS 14 or later, Xcode, `brew install xcodegen`. Tested on
-macOS 27 with files from a Sony A7 IV.
+Requires macOS 14 or later, on Apple silicon or Intel. Tested on macOS 27 with
+files from a Sony A7 IV.
 
-There are no prebuilt downloads: an ad-hoc signed app from the internet would be
-blocked by Gatekeeper, and a notarized build needs a paid Apple Developer ID.
-Build it yourself:
+The app is **ad-hoc signed, not notarized**: a notarized build needs a paid
+Apple Developer ID. macOS therefore quarantines a downloaded copy and
+Gatekeeper refuses to open it until the quarantine flag is removed. The
+Homebrew cask does that for you.
+
+### Homebrew
+
+This repository is also a Homebrew tap:
+
+```sh
+brew tap raphmatt/arw-quicklook https://github.com/Raphmatt/arw-quicklook
+brew install --cask arw-quicklook
+```
+
+The cask removes the quarantine flag, registers the app and switches both
+Quick Look extensions on. `brew uninstall --cask arw-quicklook` removes it
+again (`--zap` also deletes the settings).
+
+### Download
+
+1. Download `ARWQuickLook-<version>.zip` from the
+   [latest release](https://github.com/Raphmatt/arw-quicklook/releases/latest),
+   unzip it and move `ARWQuickLook.app` to `/Applications`.
+2. Remove the quarantine flag:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/ARWQuickLook.app
+   ```
+
+3. Open the app once, then switch on `ARWThumbnail` and `ARWPreview` under
+   System Settings › General › Login Items & Extensions › **Quick Look**.
+
+### Build from source
+
+Needs Xcode and `brew install xcodegen`.
 
 ```sh
 make install
@@ -124,22 +156,32 @@ enables both extensions, and resets Quick Look.
 
 Other targets (`make` lists them):
 
-| Target           | Does                                                     |
-| ---------------- | -------------------------------------------------------- |
-| `make build`     | Debug compile only, nothing signed or installed          |
-| `make uninstall` | Remove the app from `/Applications` and reset Quick Look |
-| `make reset`     | Reset Quick Look's generators and cache                  |
-| `make clean`     | Remove build output and the generated Xcode project      |
+| Target           | Does                                                              |
+| ---------------- | ----------------------------------------------------------------- |
+| `make build`     | Debug compile only, nothing signed or installed                   |
+| `make release`   | Universal (arm64 + x86_64), ad-hoc signed zip in `build/`         |
+| `make uninstall` | Remove the app from `/Applications` and reset Quick Look          |
+| `make reset`     | Reset Quick Look's generators and cache                           |
+| `make clean`     | Remove build output and the generated Xcode project               |
 
-If Quick Look still says "Extension … not found", an extension is disabled:
-turn on `ARWThumbnail` and `ARWPreview` under System Settings › General ›
-Login Items & Extensions › **Quick Look**.
+If Quick Look says "Extension … not found", an extension is disabled: turn on
+`ARWThumbnail` and `ARWPreview` under System Settings › General › Login Items &
+Extensions › **Quick Look**.
+
+### Releases
+
+GitHub Actions builds every push and pull request on macOS 26 (Xcode 26.6) and
+keeps the zip as a workflow artifact. Pushing a tag `vX.Y.Z` also publishes a
+release with the zip and updates `Casks/arw-quicklook.rb` (version and
+sha256) on `main`.
 
 ## Layout
 
 ```
 project.yml                          XcodeGen definition (app + 2 extensions)
-Makefile, build.sh                   build / install / uninstall shortcuts
+Makefile, build.sh                   build / release / install / uninstall shortcuts
+.github/workflows/build.yml          CI build; tags publish a release + update the cask
+Casks/arw-quicklook.rb               Homebrew cask (this repo is a tap)
 Sources/Shared/ARWImageLoader.swift  embedded preview + full-size JPEG / raw decode
 Sources/Shared/SonyFocusReader.swift focus point from the Sony MakerNote + TIFF reader
 Sources/Shared/SharedSettings.swift  app ↔ extension settings (shared plist)
@@ -182,8 +224,9 @@ qlmanage -r && qlmanage -r cache && killall -KILL quicklookd
   encrypted MakerNote section); for those the AF button stays dimmed.
 - The first full-resolution render per process is slower (Metal pipeline
   warm-up); warm timings are in the table above.
-- Ad-hoc signature loads locally only. For proper signing set `DEVELOPMENT_TEAM`
-  in `project.yml` and `CODE_SIGN_IDENTITY` to "Apple Development".
+- Ad-hoc signed, not notarized: downloaded copies need the quarantine flag
+  removed (see Install). For proper signing set `DEVELOPMENT_TEAM` in
+  `project.yml` and `CODE_SIGN_IDENTITY` to a Developer ID.
 
 ## Disclaimer
 
