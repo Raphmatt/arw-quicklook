@@ -16,8 +16,8 @@ the framing — moving to another image cancels it.
 | Path                         | Method                                                              | Measured (A7 IV, 33 MP)                           |
 | ---------------------------- | ------------------------------------------------------------------- | ------------------------------------------------- |
 | Preview (instant)            | `CGImageSourceCreateThumbnailAtIndex` → embedded JPEG (1616 px)     | ~20 ms (first image ~240 ms, one-time codec load) |
-| Full resolution (background) | full-size camera JPEG from IFD2 (`JpgFromRaw`) → IOSurface          | ~35 ms warm (M-size RAW: ~15 ms)                  |
-| Full resolution, fallback    | `CIRAWFilter` (GPU) → IOSurface, for files without a full-size JPEG | ~560–670 ms warm                                  |
+| Full resolution (background) | full-size camera JPEG from IFD2 (`JpgFromRaw`) → panel size → IOSurface | ~35 ms warm (M-size RAW: ~15 ms)                  |
+| Full resolution, fallback    | `CIRAWFilter` (GPU, `scaleFactor`) → IOSurface, files without a full-size JPEG | ~560–670 ms warm                                  |
 
 Newer Sony bodies (e.g. the A7 IV) store, besides the 1616 px preview, a
 full-size camera JPEG in the ARW's third IFD — 7008×4672 for full-size RAW,
@@ -37,12 +37,27 @@ exactly — Creative Look, DRO, lens corrections — but shows JPEG compression 
 Flow in the preview panel (`PreviewViewController`):
 
 1. Show the embedded preview instantly, fit to the window.
-2. Start the full-resolution decode in the background right away (non-blocking).
+2. Render the full image in the background right away, at the resolution the
+   panel actually shows (magnification × display scale), not the sensor size.
 3. Swap the sharp image in — same zoom/scroll position, it just gets sharper.
-4. Moving to another image cancels the pending decode (decodes are serialized
-   through an actor; a queued decode whose task was cancelled never starts).
-5. The status chip (bottom left) names what's on screen (Preview /
-   Full) and toggles between the cached embedded and full versions on click.
+4. Zooming in or enlarging the panel renders a sharper version once the current
+   one would be upscaled by more than 10 % (30 % headroom; native resolution
+   from 85 % on). It never downgrades while visible; closing the preview frees
+   the image.
+5. Moving to another image cancels pending renders (renders are serialized
+   through an actor; a queued render whose task was cancelled never starts).
+6. Two icon buttons at the bottom left switch between the camera's embedded
+   preview and the full image, and toggle the focus overlay. They stay
+   invisible until the pointer moves and fade out after 1.5 s, so nothing in
+   that corner changes while flipping through images. State is shown by
+   brightness; details are in the tooltips. With VoiceOver they stay visible;
+   `controlsAlwaysVisible = true` in the settings plist keeps them at half
+   strength.
+
+Memory: a full image is 4 bytes per pixel, so the sensor-size render is
+131 MB at 33 MP (245 MB at 61 MP). Fitted on a 5K display the render is about
+69 MB, on a 14" MacBook Pro about 20 MB; the native size is only rendered when
+you zoom in that far.
 
 Zoom and pan like Preview.app: pinch to zoom (floor = fit-to-window, so no
 letterbox borders), free two-finger panning in any direction.
@@ -65,18 +80,18 @@ Points and areas are drawn differently:
 | --------------------------------------------------------- | --------------------------------------------------------- | ------------------------ |
 | Wide, Spot, or a detected face/eye (`0x2021` Face/Eye AF) | square, fitted to the point / eye / face                  | solid green frame        |
 | Center, Zone, Flexible Spot                               | wide rectangle (e.g. 1073×808) — only the _area_ is known | white corner brackets    |
-| Manual focus                                              | image centre (a fallback)                                 | nothing; chip shows "MF" |
+| Manual focus                                              | image centre (a fallback)                                 | nothing; AF button dimmed |
 
 The classification uses the frame's shape (areas are non-square, points are
 square), because the AF-area setting alone is ambiguous: with Face/Eye AF on in
 Center mode the camera stores a square face box when it found a face, else the
 zone. Sony does not record whether a detection was an eye or a whole face; the
-frame size makes it visible. The AF chip names the area mode ("AF · Wide");
-its tooltip adds focus mode and subject detection. Areas can be switched off
+frame size makes it visible. The AF button's tooltip names focus mode, area
+mode and subject detection ("AF-C · Wide · Face/Eye AF"). Areas can be switched off
 separately in Settings ("Show general AF areas").
 
-Toggle it with the **AF chip** in the preview (next to the status chip — the
-chip is hidden when a file has no focus data) or in the app under
+Toggle it with the **AF button** in the preview (dimmed when a file has no
+focus data) or in the app under
 **ARWQuickLook › Settings**. The state is shared via
 `~/Library/Application Support/ARWQuickLook/settings.plist`; App Groups were
 deliberately avoided because with ad-hoc signing macOS 15+ re-prompts for
@@ -157,14 +172,14 @@ qlmanage -r && qlmanage -r cache && killall -KILL quicklookd
   extension (legacy `.qlgenerator` plugins ran un-sandboxed, which is why e.g.
   Affinity's worked there). Workaround: drag the file out of the Trash.
 - The embedded Sony preview is ~1616 px — slightly soft fullscreen until the
-  full-resolution image swaps in.
+  sharp render swaps in.
 - **Focus point**: only the single, final focus location is stored — Sony does
   not write the full PDAF point grid, tracking history, or multiple subjects,
   so a Lightroom-style "all AF points" display is impossible. With manual focus
   Sony writes the image centre as a fallback; those shots are recognised by the
   focus mode tag and get no frame. Bodies from
   before ~2015 don't write `FocusLocation` at all (their AF data sits in an
-  encrypted MakerNote section); for those the AF chip simply doesn't appear.
+  encrypted MakerNote section); for those the AF button stays dimmed.
 - The first full-resolution render per process is slower (Metal pipeline
   warm-up); warm timings are in the table above.
 - Ad-hoc signature loads locally only. For proper signing set `DEVELOPMENT_TEAM`

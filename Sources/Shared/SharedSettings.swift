@@ -35,6 +35,15 @@ enum SharedSettings {
         }
     }
 
+    private static let controlsAlwaysVisibleKey = "controlsAlwaysVisible"
+
+    /// Keep the preview's controls visible (half strength) instead of hiding
+    /// them until the pointer moves. No UI; set it in settings.plist if
+    /// pointer movement doesn't reach the extension on some setup.
+    static var controlsAlwaysVisible: Bool {
+        (load()[controlsAlwaysVisibleKey] as? Bool) ?? false
+    }
+
     // MARK: - Plist storage
 
     private static var settingsURL: URL? {

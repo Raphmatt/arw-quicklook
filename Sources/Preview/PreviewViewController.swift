@@ -197,21 +197,19 @@ final class ImageCanvasView: NSView {
 /// Quick Look preview panel for Sony ARW.
 ///
 /// - Embedded preview shown instantly (~20 ms warm), fit to the panel.
-/// - Full-resolution decode starts immediately in the background and swaps in
-///   without changing the framing (same zoom/scroll — it just gets sharper).
-///   Moving to another image cancels it; only rapid flipping stays on embedded.
-/// - The status chip (bottom left) names what's on screen and toggles between
-///   the cached embedded and full versions.
+/// - The full image is rendered in the background at the resolution the panel
+///   shows (sharper renders on zoom-in or resize, released on close) and swaps
+///   in without changing the framing. Moving to another image cancels it.
+/// - Bottom-left icon buttons (embedded/full, AF overlay) appear only when the
+///   pointer moves; nothing there changes while flipping through images.
 /// - Pinch / double-tap to zoom, free two-finger panning — like Preview.app.
 final class PreviewViewController: NSViewController, QLPreviewingController {
 
     private let scrollView = NSScrollView()
     private let canvas = ImageCanvasView()
-    /// Status chip in the bottom-left controls capsule: "Preview" / "Full".
-    /// Deliberately no loading indicator — it flickered on every image.
-    private let statusButton = NSButton()
-    /// Toggles the autofocus-point overlay; hidden when the file has no AF data.
-    private let afButton = NSButton()
+    /// Bottom-left icon buttons (embedded/full, AF overlay); hidden until the
+    /// pointer moves. No loading indicator — it flickered on every image.
+    private let controls = ControlsCapsule()
     private static let decoder = FullResDecoder()
 
     private static let log = Logger(subsystem: "io.github.raphmatt.arwquicklook", category: "render")
@@ -251,8 +249,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     override func loadView() {
         // Transparent everywhere — letterbox areas show QuickLook's own panel
         // background instead of a hard black fill.
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 680))
+        let root = PreviewRootView(frame: NSRect(x: 0, y: 0, width: 1000, height: 680))
         root.wantsLayer = true
+        root.controls = controls
 
         let clip = CenteringClipView()
         clip.drawsBackground = false
@@ -273,11 +272,13 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scrollView)
 
-        configureStatusButton()
-        configureAFButton()
-
-        let pill = makeControlsPill(arrangedSubviews: [statusButton, afButton])
-        root.addSubview(pill)
+        controls.layersButton.target = self
+        controls.layersButton.action = #selector(chipClicked)
+        controls.afButton.target = self
+        controls.afButton.action = #selector(afClicked)
+        root.addSubview(controls)
+        setState(.preview)
+        updateAFButton()
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -285,8 +286,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             scrollView.topAnchor.constraint(equalTo: root.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            pill.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-            pill.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+            controls.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            controls.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
         ])
 
         NotificationCenter.default.addObserver(
@@ -315,89 +316,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         case preview, loading, full
     }
 
-    /// Groups the controls on one capsule that stays legible over any photo, in
-    /// light and dark mode: the capsule is forced to the dark appearance and
-    /// tinted, so it is always white-on-dark, independent of the image
-    /// underneath. Liquid Glass on macOS 26+, a dark HUD blur before that.
-    private func makeControlsPill(arrangedSubviews: [NSView]) -> NSView {
-        let stack = NSStackView(views: arrangedSubviews)
-        stack.orientation = .horizontal
-        stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
-        stack.detachesHiddenViews = true // AF hidden → capsule shrinks
-
-        let pill: NSView
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = .regular
-            glass.cornerRadius = 13
-            // Darkening tint so white text keeps contrast over bright skies/snow.
-            glass.tintColor = NSColor.black.withAlphaComponent(0.35)
-            glass.contentView = stack
-            pill = glass
-        } else {
-            let hud = NSVisualEffectView()
-            hud.material = .hudWindow
-            hud.blendingMode = .withinWindow
-            hud.state = .active
-            hud.wantsLayer = true
-            hud.layer?.cornerRadius = 13
-            hud.layer?.masksToBounds = true
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            hud.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: hud.leadingAnchor),
-                stack.trailingAnchor.constraint(equalTo: hud.trailingAnchor),
-                stack.topAnchor.constraint(equalTo: hud.topAnchor),
-                stack.bottomAnchor.constraint(equalTo: hud.bottomAnchor),
-            ])
-            pill = hud
-        }
-        // Dark appearance → white labels, regardless of the
-        // system light/dark setting.
-        pill.appearance = NSAppearance(named: .darkAqua)
-        pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        return pill
-    }
-
-    /// Borderless label-style button for use inside the controls capsule.
-    private func styleChip(_ button: NSButton) {
-        button.isBordered = false
-        button.font = .systemFont(ofSize: 11, weight: .semibold)
-        button.contentTintColor = .white
-        button.translatesAutoresizingMaskIntoConstraints = false
-    }
-
-    private func configureStatusButton() {
-        styleChip(statusButton)
-        statusButton.target = self
-        statusButton.action = #selector(chipClicked)
-        setState(.preview)
-    }
-
-    private func configureAFButton() {
-        styleChip(afButton)
-        afButton.title = "AF"
-        afButton.target = self
-        afButton.action = #selector(afClicked)
-        afButton.isHidden = true
-    }
-
-    /// Chip reads e.g. "AF · Wide"; the tooltip adds focus mode and subject
-    /// detection ("AF-C · Wide · Face/Eye AF"). Dimmed = overlay off.
+    /// AF button: brightness = overlay on/off; dim when there's nothing to
+    /// show (no AF data, or manual focus). Mode details go to the tooltip.
     private func updateAFButton() {
-        afButton.isHidden = focusInfo == nil
-        if focusInfo?.isManualFocus == true {
-            afButton.title = "MF" // no frame drawn — nothing to toggle
-        } else {
-            afButton.title = focusInfo?.areaMode.map { "AF · \($0)" } ?? "AF"
-        }
-        afButton.alphaValue = showFocus ? 1.0 : 0.45
-        let details = [focusInfo?.focusMode, focusInfo?.areaMode, focusInfo?.tracking]
-            .compactMap { $0 }.joined(separator: " · ")
-        let action = showFocus ? "Click to hide focus frame" : "Click to show focus frame"
-        afButton.toolTip = details.isEmpty ? action : "\(details)\n\(action)"
+        let available = focusInfo.map { !$0.isManualFocus } ?? false
+        let parts: [String?] = [focusInfo?.focusMode, focusInfo?.areaMode, focusInfo?.tracking]
+        var details = parts.compactMap { $0 }.joined(separator: " · ")
+        if focusInfo == nil { details = "No focus data in this file" }
+        if focusInfo?.isManualFocus == true { details += " — no focus point recorded" }
+        controls.setAF(on: showFocus, available: available, details: details)
     }
 
     @objc private func afClicked() {
@@ -415,24 +342,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         scheduleResolutionCheck() // zoom by double-tap / programmatic changes
     }
 
-    /// The chip stays enabled in every state — a disabled NSButton lets the
-    /// click fall through to the Quick Look panel, which opens the file in its
-    /// default app. The title names what you're looking at; clicking toggles.
+    /// What's on screen, mirrored in the layers button's brightness only.
     private func setState(_ state: LoadState) {
         self.state = state
-        switch state {
-        case .preview:
-            statusButton.title = "Preview"
-            statusButton.toolTip = hasFull
-                ? "Click to show full resolution"
-                : "Click to load full resolution"
-        case .loading:
-            statusButton.title = "Preview" // stays put while decoding — no flicker
-            statusButton.toolTip = nil
-        case .full:
-            statusButton.title = "Full"
-            statusButton.toolTip = "Click to show embedded preview"
-        }
+        controls.setLayers(showingFull: state == .full, available: hasFull)
     }
 
     // MARK: - QLPreviewingController
