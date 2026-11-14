@@ -42,7 +42,8 @@ XcodeGen project (`project.yml`): a host app plus two app extensions, Swift 5 mo
 - **Never render more pixels than the panel shows.** Upgrade on zoom-in or resize, never downgrade while visible, free on close.
 - **Every read from an ARW is bounds-checked** (untrusted input in a sandboxed extension). Cap value counts and IFD chain length, and guard against cycles.
 - **Settings are shared through the plist, not App Groups.** With ad-hoc signing, macOS 15+ re-prompts for group containers on every rebuild. The App and Preview targets carry a temporary-exception for that folder; Thumbnail needs none.
-- **A changed bundle ID starts disabled** (Quick Look: "Extension … not found"). `build.sh` and the cask enable both extensions with `pluginkit -e use`.
+- **A changed bundle ID starts disabled** (Quick Look: "Extension … not found"). `build.sh` enables both extensions with `pluginkit -e use`.
+- **The cask uses `postflight_steps` only, never a Ruby `postflight` block.** The Ruby block is deprecated and makes Homebrew warn on every `brew` command for anyone who has the tap. The steps run sandboxed (no Launch Services, no pluginkit), so the cask only removes the quarantine flag; opening the app once registers the extensions.
 - **Releases are ad-hoc signed and universal** (arm64 + x86_64), with no Developer ID or notarization. Keep `make release`, the workflow's checks and the cask's quarantine/enable steps in sync.
 
 ## Verified facts (macOS 27.2, Sony A7 IV)

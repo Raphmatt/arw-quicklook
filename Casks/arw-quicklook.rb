@@ -17,23 +17,16 @@ cask "arw-quicklook" do
 
   app "ARWQuickLook.app"
 
-  # Legacy Ruby block on purpose: `postflight_steps` runs in Homebrew's sandbox,
-  # which blocks LaunchServices and pluginkit, so it cannot register or enable
-  # the extensions. Deprecated (one warning per install) and only kept for
-  # third-party taps "temporarily"; it errors when HOMEBREW_DEVELOPER is set.
-  postflight do
-    app = "#{appdir}/ARWQuickLook.app"
-    # Ad-hoc signed, not notarized: Gatekeeper blocks it while quarantined.
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", app]
-    system_command "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-                   args: ["-f", app]
-    %w[thumbnail preview].each do |ext|
-      appex = "#{app}/Contents/PlugIns/ARW#{ext.capitalize}.appex"
-      system_command "/usr/bin/pluginkit", args: ["-a", appex]
-      system_command "/usr/bin/pluginkit", args: ["-e", "use", "-i", "io.github.raphmatt.arwquicklook.#{ext}"]
-    end
-    system_command "/usr/bin/qlmanage", args: ["-r"]
+  # Ad-hoc signed, not notarized: Gatekeeper blocks it while quarantined.
+  # Structured steps (sandboxed) instead of a Ruby `postflight` block, which
+  # Homebrew deprecated and warns about on every brew command. The sandbox
+  # can't reach Launch Services or pluginkit; macOS registers the extensions
+  # when the app is opened (see caveats).
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:           ["-dr", "com.apple.quarantine", "{{appdir}}/ARWQuickLook.app"],
+        writable_paths: ["ARWQuickLook.app"],
+        writable_base:  :appdir
   end
 
   uninstall quit: "io.github.raphmatt.arwquicklook"
@@ -47,8 +40,9 @@ cask "arw-quicklook" do
   ]
 
   caveats <<~EOS
-    #{token} is ad-hoc signed and not notarized. This cask removes its quarantine
-    flag. If no previews appear, turn on ARWThumbnail and ARWPreview under
-    System Settings > General > Login Items & Extensions > Quick Look.
+    #{token} is ad-hoc signed and not notarized; this cask removes its
+    quarantine flag. Open ARWQuickLook once so macOS registers the previews.
+    If none appear, turn on ARWThumbnail and ARWPreview under System Settings >
+    General > Login Items & Extensions > Quick Look.
   EOS
 end

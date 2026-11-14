@@ -128,11 +128,10 @@ Homebrew 6 and later only load casks from third-party taps you trust; naming
 the cask in full, as above, trusts this one cask. (Or run
 `brew trust --cask raphmatt/arw-quicklook/arw-quicklook` first.)
 
-The cask removes the quarantine flag, registers the app and switches both
-Quick Look extensions on. Homebrew prints a deprecation warning for its
-`postflight` block: the sandboxed replacement can't register Quick Look
-extensions yet. `brew uninstall --cask arw-quicklook` removes it again
-(`--zap` also deletes the settings and sandbox containers).
+The cask removes the quarantine flag. **Open ARWQuickLook once** afterwards:
+that registers the Quick Look extensions (Homebrew's install steps run in a
+sandbox that can't do it). `brew uninstall --cask arw-quicklook` removes it
+again (`--zap` also deletes the settings and sandbox containers).
 
 ### Download
 
