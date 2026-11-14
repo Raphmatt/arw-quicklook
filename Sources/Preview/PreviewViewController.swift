@@ -1,6 +1,7 @@
 import Cocoa
 import IOSurface
 import Quartz // QLPreviewingController
+import os
 
 /// Clip view that keeps the document centered when it's smaller than the viewport
 /// (so a fitted/letterboxed image sits in the middle instead of the bottom-left).
@@ -15,13 +16,13 @@ final class CenteringClipView: NSClipView {
     }
 }
 
-/// Serializes full-resolution decodes so at most one render runs at a time.
-/// A queued decode whose task was cancelled while waiting (user moved to another
-/// image) bails out before doing any work.
+/// Serializes full-image renders so at most one runs at a time. A queued render
+/// whose task was cancelled while waiting (another image, or a sharper render
+/// was requested) bails out before doing any work.
 actor FullResDecoder {
-    func decode(url: URL) throws -> IOSurface? {
+    func render(_ source: ARWImageLoader.FullSource, scale: CGFloat) throws -> IOSurface? {
         try Task.checkCancellation()
-        return ARWImageLoader.fullDecode(url: url)
+        return ARWImageLoader.render(source, scale: scale)
     }
 }
 
@@ -163,9 +164,19 @@ final class ImageCanvasView: NSView {
         }
     }
 
-    /// Installs the full-res IOSurface behind the embedded layer.
+    /// Installs (or upgrades) the full image. Any resolution: the layer
+    /// stretches it to the canvas, which keeps fixed coordinates.
     func setFull(_ surface: IOSurface) {
         withoutAnimation { fullLayer.contents = surface }
+    }
+
+    /// Drops the full image (frees its surface) and shows the embedded one.
+    func clearFull() {
+        withoutAnimation {
+            fullLayer.contents = nil
+            fullLayer.zPosition = 0
+            embeddedLayer.zPosition = 1
+        }
     }
 
     func showFull(_ full: Bool) {
@@ -203,11 +214,27 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private let afButton = NSButton()
     private static let decoder = FullResDecoder()
 
+    private static let log = Logger(subsystem: "io.github.raphmatt.arwquicklook", category: "render")
+
+    /// Re-render only when the screen needs >10 % more pixels than rendered…
+    private static let upscaleTolerance: CGFloat = 1.1
+    /// …then render 30 % beyond the need, so a pinch doesn't render every step…
+    private static let zoomHeadroom: CGFloat = 1.3
+    /// …and go straight to native resolution once that close to it.
+    private static let snapToNative: CGFloat = 0.85
+
     private var currentURL: URL?
+    /// The current file's full-resolution source (compressed, cheap to keep).
+    private var source: ARWImageLoader.FullSource?
     private var fullResTask: Task<Void, Never>?
-    /// Bumped on every start/cancel; only the decode holding the current value
-    /// may update the chip and canvas.
-    private var decodeGeneration = 0
+    private var resolutionCheck: Task<Void, Never>?
+    /// Bumped per file and when the preview closes; renders from an older
+    /// generation are dropped.
+    private var fileGeneration = 0
+    /// Scale (fraction of native pixels) of the installed / requested render.
+    private var renderedScale: CGFloat = 0
+    private var pendingScale: CGFloat = 0
+    private var inLiveMagnify = false
     private var state: LoadState = .preview
     private var hasEmbedded = false
     private var hasFull = false
@@ -263,8 +290,14 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         ])
 
         NotificationCenter.default.addObserver(
-            self, selector: #selector(userInteracted),
+            self, selector: #selector(liveMagnifyStarted),
             name: NSScrollView.willStartLiveMagnifyNotification, object: scrollView)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(liveMagnifyEnded),
+            name: NSScrollView.didEndLiveMagnifyNotification, object: scrollView)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(backingChanged(_:)),
+            name: NSWindow.didChangeBackingPropertiesNotification, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(userInteracted),
             name: NSScrollView.willStartLiveScrollNotification, object: scrollView)
@@ -379,6 +412,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     @objc private func clipBoundsChanged() {
         canvas.setFocusScale(scrollView.magnification)
+        scheduleResolutionCheck() // zoom by double-tap / programmatic changes
     }
 
     /// The chip stays enabled in every state — a disabled NSButton lets the
@@ -405,36 +439,44 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     func preparePreviewOfFile(at url: URL) async throws {
         // Quick Look may re-prepare the same file (e.g. window state changes).
-        // Everything is already loaded — don't wipe the caches and re-decode.
-        // If the panel was closed mid-decode (viewWillDisappear cancelled it),
-        // resume the full-resolution load instead of staying on the preview.
-        if url == currentURL, hasEmbedded {
-            if !hasFull, fullResTask == nil { startFullRes(for: url) }
+        // Keep what is loaded. If the panel was closed meanwhile (which
+        // released the full image), render it again at the size now needed.
+        if url == currentURL, hasEmbedded || source != nil {
+            if !hasFull, fullResTask == nil { updateResolution() }
             return
         }
 
-        cancelFullRes()
+        releaseFull()
         currentURL = url
         isFitted = true
         hasEmbedded = false
-        hasFull = false
+        source = nil
         focusInfo = nil
         canvas.reset()
         updateAFButton()
-        setState(.preview)
 
         let px = targetPixelSize()
         async let focusTask = Task.detached(priority: .userInitiated) {
             SonyFocusInfo.read(url: url)
         }.value
+        async let sourceTask = Task.detached(priority: .userInitiated) {
+            ARWImageLoader.openSource(url: url)
+        }.value
+
+        // The canvas keeps the embedded preview's coordinates for the whole
+        // life of the file: renders of any resolution stretch into the same
+        // frame, so a sharper image never moves the framing.
         if let preview = await detachedDecode({ ARWImageLoader.embeddedPreview(url: url, maxPixelSize: px) }),
            currentURL == url {
             hasEmbedded = true
-            setPreferredSize(aspect: CGSize(width: preview.width, height: preview.height))
-            canvas.frame = NSRect(x: 0, y: 0, width: preview.width, height: preview.height)
+            setCanvasSize(CGSize(width: preview.width, height: preview.height))
             canvas.setEmbedded(preview)
-            fitAndCenter()
         }
+
+        let opened = await sourceTask
+        guard currentURL == url else { return } // superseded while awaiting
+        source = opened
+        if !hasEmbedded, let opened { setCanvasSize(opened.nativeSize) }
 
         if let focus = await focusTask, currentURL == url {
             focusInfo = focus
@@ -442,59 +484,36 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             canvas.setFocus(focus, visible: showFocus, showZones: SharedSettings.showFocusZones)
             updateAFButton()
         }
+        guard currentURL == url else { return }
 
-        guard currentURL == url else { return } // superseded while awaiting
-
-        // Nothing to show yet (no embedded preview): wait for the full image
+        // Nothing to show yet (no embedded preview): wait for the first render
         // here, so a file that can't be read at all throws and Quick Look
         // shows its generic fallback instead of an empty panel.
         if !hasEmbedded {
-            startFullRes(for: url)
+            updateResolution()
             await fullResTask?.value
             if currentURL == url, !hasFull { throw CocoaError(.fileReadCorruptFile) }
             return
         }
 
-        // Full resolution starts right away — only rapid flipping stays on the
-        // embedded preview, because moving to another file cancels this task.
-        startFullRes(for: url)
+        // The sharp image starts right away — only rapid flipping stays on the
+        // embedded preview, because moving to another file cancels the render.
+        updateResolution()
     }
 
     // MARK: - Display
 
-    /// Install the full-res image and make it visible, preserving the user's
-    /// framing if they have zoomed/panned (same spot, just sharper).
-    private func attachFull(_ surface: IOSurface) {
-        let size = NSSize(width: surface.width, height: surface.height)
-
-        if !isFitted, canvas.frame.width > 0 {
-            let oldW = canvas.frame.width, oldH = canvas.frame.height
-            let vis = scrollView.contentView.documentVisibleRect
-            let fracX = vis.midX / oldW, fracY = vis.midY / oldH
-            let oldMag = scrollView.magnification
-
-            canvas.setFull(surface)
-            canvas.frame = NSRect(origin: .zero, size: size)
-            // Lower the floor first — magnification values shrink with the larger
-            // image, and setting magnification below the old floor would clamp.
-            scrollView.minMagnification = fitMagnification(for: size)
-            scrollView.magnification = oldMag * oldW / size.width
-            let newVis = scrollView.contentView.documentVisibleRect
-            canvas.scroll(NSPoint(x: fracX * size.width - newVis.width / 2,
-                                  y: fracY * size.height - newVis.height / 2))
-            canvas.showFull(true)
-            canvas.setFocusScale(scrollView.magnification)
-            return
-        }
-
-        canvas.setFull(surface)
+    private func setCanvasSize(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        setPreferredSize(aspect: size)
         canvas.frame = NSRect(origin: .zero, size: size)
-        canvas.showFull(true)
         fitAndCenter()
     }
 
-    private func fitMagnification(for imageSize: NSSize) -> CGFloat {
-        let b = scrollView.bounds.size
+    /// Magnification that fits `imageSize` into `container` (the scroll view's
+    /// current bounds by default).
+    private func fitMagnification(for imageSize: NSSize, in container: NSSize? = nil) -> CGFloat {
+        let b = container ?? scrollView.bounds.size
         guard imageSize.width > 0, imageSize.height > 0, b.width > 1, b.height > 1 else { return 1 }
         return min(b.width / imageSize.width, b.height / imageSize.height)
     }
@@ -520,26 +539,134 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         } else {
             scrollView.minMagnification = fitMagnification(for: canvas.frame.size)
         }
+        scheduleResolutionCheck() // a bigger panel may need more pixels
+    }
+
+    @objc private func liveMagnifyStarted() {
+        isFitted = false
+        inLiveMagnify = true
+    }
+
+    @objc private func liveMagnifyEnded() {
+        inLiveMagnify = false
+        updateResolution()
     }
 
     @objc private func userInteracted() { isFitted = false }
 
-    // MARK: - Full resolution
+    @objc private func backingChanged(_ note: Notification) {
+        guard (note.object as? NSWindow) === view.window else { return }
+        updateResolution() // moved to a display with a different pixel density
+    }
 
-    private func startFullRes(for url: URL) {
-        decodeGeneration &+= 1
-        let generation = decodeGeneration
-        setState(.loading)
-        fullResTask = Task { [weak self] in
-            await self?.runFullDecode(url: url, generation: generation)
+    // MARK: - Display-resolution rendering
+
+    /// Fraction of the source's native pixels the screen needs right now:
+    /// device pixels per canvas point (magnification × backing scale) divided
+    /// by source pixels per canvas point.
+    private func neededScale() -> CGFloat? {
+        guard let source, source.nativeSize.width > 0, canvas.frame.width > 0 else { return nil }
+        let backing = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        var magnification = scrollView.magnification
+        if isFitted {
+            // Before Quick Look's first resize the bounds are still the
+            // placeholder size — size the first render for the panel it asked for.
+            let panel = NSSize(width: max(scrollView.bounds.width, preferredContentSize.width),
+                               height: max(scrollView.bounds.height, preferredContentSize.height))
+            magnification = max(magnification, fitMagnification(for: canvas.frame.size, in: panel))
         }
+        return min(1, magnification * backing * canvas.frame.width / source.nativeSize.width)
+    }
+
+    /// Renders a sharper image when the current one would be upscaled on
+    /// screen. Never downgrades while visible (zooming back out keeps the
+    /// sharper surface); `releaseFull()` frees it when the preview closes.
+    private func updateResolution() {
+        guard let url = currentURL, let source, let needed = neededScale() else { return }
+        let have = max(renderedScale, pendingScale)
+        guard needed > have * Self.upscaleTolerance else { return }
+
+        // First render: exactly what the fitted panel shows. Later ones: with
+        // headroom, so a pinch doesn't trigger a render per step; close to
+        // native it's not worth a partial render.
+        var target = have == 0 ? needed : needed * Self.zoomHeadroom
+        if target >= Self.snapToNative { target = 1 }
+
+        // A queued render that's now too small bails before it starts; one
+        // already running finishes and is still used if it is an upgrade.
+        fullResTask?.cancel()
+        pendingScale = target
+        let generation = fileGeneration
+        if !hasFull { setState(.loading) }
+        fullResTask = Task { [weak self] in
+            let started = Date()
+            let surface = try? await Self.decoder.render(source, scale: target)
+            self?.installRender(surface, scale: target, url: url,
+                                generation: generation, started: started)
+        }
+    }
+
+    /// Re-render at most once a frame or so while the user scrolls/resizes.
+    private func scheduleResolutionCheck() {
+        guard !inLiveMagnify, source != nil else { return }
+        resolutionCheck?.cancel()
+        resolutionCheck = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            self?.updateResolution()
+        }
+    }
+
+    private func installRender(_ surface: IOSurface?, scale: CGFloat, url: URL,
+                               generation: Int, started: Date) {
+        // A render for another file, or from before the preview closed.
+        guard generation == fileGeneration, currentURL == url else { return }
+        if scale == pendingScale { // the latest request has finished
+            pendingScale = 0
+            fullResTask = nil
+        }
+        guard let surface else {
+            if !hasFull, pendingScale == 0 { setState(.preview) } // render failed
+            return
+        }
+        guard scale > renderedScale else { return } // a newer, sharper one won
+        Self.log.debug("""
+            render scale \(scale, format: .fixed(precision: 2)) → \(surface.width)×\(surface.height) \
+            in \(Int(-started.timeIntervalSinceNow * 1000)) ms
+            """)
+        renderedScale = scale
+        canvas.setFull(surface) // same frame, so no framing math
+        if !hasFull {
+            hasFull = true
+            canvas.showFull(true)
+            setState(.full)
+        }
+    }
+
+    /// Frees the big surface and stops pending renders (new file, or the
+    /// preview closed). The small embedded preview and the opened source stay;
+    /// a re-prepare renders again at the size then needed.
+    private func releaseFull() {
+        fullResTask?.cancel()
+        fullResTask = nil
+        resolutionCheck?.cancel()
+        resolutionCheck = nil
+        fileGeneration &+= 1
+        renderedScale = 0
+        pendingScale = 0
+        if hasFull {
+            hasFull = false
+            canvas.clearFull()
+            ARWImageLoader.ciContext.clearCaches()
+        }
+        setState(.preview)
     }
 
     /// Toggle between the cached embedded and full-resolution versions.
     @objc private func chipClicked() {
         switch state {
         case .loading:
-            return // decode already running; swallow the click
+            return // render already running; swallow the click
         case .full:
             guard hasEmbedded else { return }
             canvas.showFull(false)
@@ -548,44 +675,15 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             if hasFull {
                 canvas.showFull(true)
                 setState(.full)
-            } else if fullResTask == nil, let url = currentURL {
-                startFullRes(for: url)
+            } else if fullResTask == nil {
+                updateResolution()
             }
         }
     }
 
-    private func runFullDecode(url: URL, generation: Int) async {
-        // Serialized through the actor; throws (returns nil) if this task was
-        // cancelled while waiting its turn or before the render started.
-        let full = try? await Self.decoder.decode(url: url)
-
-        // A superseded decode (cancelled, or a newer one started meanwhile)
-        // must not touch the UI — it would flip the chip under a newer decode.
-        // cancelFullRes() already restored the state for it.
-        guard generation == decodeGeneration, !Task.isCancelled, currentURL == url else { return }
-        fullResTask = nil
-        if let full {
-            hasFull = true
-            attachFull(full)
-            setState(.full)
-        } else {
-            setState(.preview)
-        }
-    }
-
-    /// Cancels a pending decode and leaves the UI consistent: the chip
-    /// never stays in the loading state (the cancelled task won't reset it itself).
-    private func cancelFullRes() {
-        fullResTask?.cancel()
-        fullResTask = nil
-        decodeGeneration &+= 1
-        if state == .loading { setState(hasFull ? .full : .preview) }
-    }
-
-
     // MARK: - Helpers
 
-    private func detachedDecode(_ work: @escaping () -> CGImage?) async -> CGImage? {
+    private func detachedDecode(_ work: @escaping @Sendable () -> CGImage?) async -> CGImage? {
         await Task.detached(priority: .userInitiated, operation: work).value
     }
 
@@ -613,11 +711,6 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
-        cancelFullRes()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-        fullResTask?.cancel()
+        releaseFull() // don't hold a screen-sized (or larger) surface while closed
     }
 }

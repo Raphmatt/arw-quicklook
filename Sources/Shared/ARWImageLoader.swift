@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import Foundation
 import ImageIO
 import IOSurface
@@ -9,15 +10,18 @@ import IOSurface
 /// `embeddedPreview` lifts the camera's small baked-in JPEG preview (~1616 px)
 /// via ImageIO — no Bayer/raw development. Measured ~20 ms warm.
 ///
-/// `fullDecode` produces the full-resolution image. Newer Sony bodies (e.g. the
+/// `openSource` + `render(_:scale:)` produce the full image. Newer Sony bodies (e.g. the
 /// A7 IV) store a full-size camera JPEG in IFD2 (`JpgFromRaw`) that ImageIO's
 /// thumbnail API never returns; decoding it takes ~35 ms and matches the
 /// camera's look exactly (Creative Look, DRO, lens corrections). Files without
 /// one fall back to a real raw development through `CIRAWFilter` (~560 ms warm).
 enum ARWImageLoader {
 
-    /// Shared GPU context so repeated full decodes reuse the compiled pipeline.
-    static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    /// Shared GPU context so repeated renders reuse the compiled pipeline. No
+    /// intermediate cache: renders are one-shot, and a cached full-size
+    /// intermediate would defeat rendering at screen size.
+    static let ciContext = CIContext(options: [.useSoftwareRenderer: false,
+                                               .cacheIntermediates: false])
 
     /// Fast path: the embedded preview. Falls back to a raw decode only if the
     /// file genuinely has no embedded preview (rare for Sony).
@@ -35,18 +39,51 @@ enum ARWImageLoader {
 
     // MARK: - Full resolution
 
-    /// Slow path: the full-resolution image, rendered into an IOSurface
-    /// (`CALayer.contents` accepts it and WindowServer composites it without a
-    /// copy). Call off the main thread. Tries the full-size embedded camera JPEG
-    /// first and develops the raw only when there is none.
-    static func fullDecode(url: URL) -> IOSurface? {
-        if let jpeg = fullSizeEmbeddedJPEG(url: url) {
-            return render(jpeg)
+    /// The full-resolution image of one file, opened once and rendered at any
+    /// scale on demand. Holds only the compressed camera JPEG (decoded lazily
+    /// by Core Image, ~4 MB) or, for the raw fallback, the file URL — never
+    /// decoded pixels, so keeping it around is cheap.
+    struct FullSource: @unchecked Sendable { // CIImage/URL are immutable
+        enum Kind {
+            case jpeg(CIImage) // oriented, colour-space tagged
+            case raw(URL)
         }
-        // The raw development is the expensive part: skip it if the caller
-        // moved on while the JPEG lookup ran.
+        let kind: Kind
+        /// Display (orientation-applied) size in pixels at scale 1.
+        let nativeSize: CGSize
+    }
+
+    /// Opens the full-resolution source: the full-size embedded camera JPEG
+    /// when there is one, else the raw for `CIRAWFilter`. Reads headers only.
+    /// Call off the main thread.
+    static func openSource(url: URL) -> FullSource? {
+        if let jpeg = fullSizeEmbeddedJPEG(url: url) {
+            return FullSource(kind: .jpeg(jpeg), nativeSize: jpeg.extent.size)
+        }
         if Task.isCancelled { return nil }
-        return rawDecode(url: url)
+        guard let output = rawFilter(url: url, scale: 1)?.outputImage else { return nil }
+        return FullSource(kind: .raw(url), nativeSize: output.extent.size)
+    }
+
+    /// Renders `source` at `scale` (0…1 of its native size) into an IOSurface
+    /// (`CALayer.contents` accepts it and WindowServer composites it without a
+    /// copy). Callers pass the scale the screen actually needs, so a fitted
+    /// image costs screen-sized memory, not full-sensor memory. Call off the
+    /// main thread.
+    static func render(_ source: FullSource, scale: CGFloat) -> IOSurface? {
+        let s = min(max(scale, 0.01), 1)
+        switch source.kind {
+        case .jpeg(let image):
+            guard s < 0.999 else { return render(image) }
+            let lanczos = CIFilter.lanczosScaleTransform()
+            lanczos.inputImage = image
+            lanczos.scale = Float(s)
+            lanczos.aspectRatio = 1
+            return lanczos.outputImage.flatMap(render)
+        case .raw(let url):
+            // CIRAWFilter develops directly at the reduced size (faster too).
+            return rawFilter(url: url, scale: s)?.outputImage.flatMap(render)
+        }
     }
 
     /// Nudge Apple's neutral raw render toward Sony's in-camera look (only used
@@ -57,18 +94,19 @@ enum ARWImageLoader {
 
     /// Raw development through Core Image (GPU), for files without a full-size
     /// embedded JPEG (older bodies).
-    static func rawDecode(url: URL) -> IOSurface? {
+    private static func rawFilter(url: URL, scale: CGFloat) -> CIRAWFilter? {
         guard let filter = CIRAWFilter(imageURL: url) else { return nil }
         filter.exposure = lookExposure
         filter.boostShadowAmount = lookShadowBoost
-        guard let output = filter.outputImage else { return nil }
-        return render(output)
+        filter.scaleFactor = Float(scale)
+        return filter
     }
 
     /// Renders `image` into a BGRA IOSurface in sRGB, the embedded preview's
     /// gamut, so the preview and the full image compare like-for-like.
     private static func render(_ image: CIImage) -> IOSurface? {
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        // Scaled extents can be fractional: round down so no edge row is empty.
         let width = Int(image.extent.width), height = Int(image.extent.height)
         guard width > 0, height > 0,
               let surface = IOSurface(properties: [
