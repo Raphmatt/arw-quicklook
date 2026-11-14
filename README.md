@@ -13,11 +13,11 @@ the framing — moving to another image cancels it.
 
 ## How it works
 
-| Path | Method | Measured (A7 IV, 33 MP) |
-|------|--------|-------------------------|
-| Preview (instant) | `CGImageSourceCreateThumbnailAtIndex` → embedded JPEG (1616 px) | ~20 ms (first image ~240 ms, one-time codec load) |
-| Full resolution (background) | full-size camera JPEG from IFD2 (`JpgFromRaw`) → IOSurface | ~35 ms warm (M-size RAW: ~15 ms) |
-| Full resolution, fallback | `CIRAWFilter` (GPU) → IOSurface, for files without a full-size JPEG | ~560–670 ms warm |
+| Path                         | Method                                                              | Measured (A7 IV, 33 MP)                           |
+| ---------------------------- | ------------------------------------------------------------------- | ------------------------------------------------- |
+| Preview (instant)            | `CGImageSourceCreateThumbnailAtIndex` → embedded JPEG (1616 px)     | ~20 ms (first image ~240 ms, one-time codec load) |
+| Full resolution (background) | full-size camera JPEG from IFD2 (`JpgFromRaw`) → IOSurface          | ~35 ms warm (M-size RAW: ~15 ms)                  |
+| Full resolution, fallback    | `CIRAWFilter` (GPU) → IOSurface, for files without a full-size JPEG | ~560–670 ms warm                                  |
 
 Newer Sony bodies (e.g. the A7 IV) store, besides the 1616 px preview, a
 full-size camera JPEG in the ARW's third IFD — 7008×4672 for full-size RAW,
@@ -61,11 +61,11 @@ portrait shots.
 
 Points and areas are drawn differently:
 
-| Camera recorded | Frame | Drawn as |
-|---|---|---|
-| Wide, Spot, or a detected face/eye (`0x2021` Face/Eye AF) | square, fitted to the point / eye / face | solid green frame |
-| Center, Zone, Flexible Spot | wide rectangle (e.g. 1073×808) — only the *area* is known | white corner brackets |
-| Manual focus | image centre (a fallback) | nothing; chip shows "MF" |
+| Camera recorded                                           | Frame                                                     | Drawn as                 |
+| --------------------------------------------------------- | --------------------------------------------------------- | ------------------------ |
+| Wide, Spot, or a detected face/eye (`0x2021` Face/Eye AF) | square, fitted to the point / eye / face                  | solid green frame        |
+| Center, Zone, Flexible Spot                               | wide rectangle (e.g. 1073×808) — only the _area_ is known | white corner brackets    |
+| Manual focus                                              | image centre (a fallback)                                 | nothing; chip shows "MF" |
 
 The classification uses the frame's shape (areas are non-square, points are
 square), because the AF-area setting alone is ambiguous: with Face/Eye AF on in
@@ -109,12 +109,12 @@ extensions, and resets Quick Look.
 
 Other targets (`make` lists them):
 
-| Target | Does |
-|---|---|
-| `make build` | Debug compile only, nothing signed or installed |
+| Target           | Does                                                     |
+| ---------------- | -------------------------------------------------------- |
+| `make build`     | Debug compile only, nothing signed or installed          |
 | `make uninstall` | Remove the app from `/Applications` and reset Quick Look |
-| `make reset` | Reset Quick Look's generators and cache |
-| `make clean` | Remove build output and the generated Xcode project |
+| `make reset`     | Reset Quick Look's generators and cache                  |
+| `make clean`     | Remove build output and the generated Xcode project      |
 
 Then **enable both extensions**:
 System Settings › General › Login Items & Extensions › **Quick Look** →
