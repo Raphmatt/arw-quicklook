@@ -4,7 +4,7 @@ import Foundation
 ///
 /// App Groups would be the textbook answer, but with ad-hoc signing macOS 15+
 /// treats every rebuild as a different app and keeps re-prompting for group
-/// container access. Instead all targets carry a sandbox temporary-exception
+/// container access. Instead the app and the Preview extension carry a sandbox temporary-exception
 /// for `~/Library/Application Support/ARWQuickLook/` and share a plain plist
 /// there. `NSHomeDirectory()` points into the sandbox container, so the real
 /// home comes from the user database.

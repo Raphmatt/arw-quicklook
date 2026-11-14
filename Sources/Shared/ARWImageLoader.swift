@@ -11,7 +11,7 @@ import IOSurface
 ///
 /// `fullDecode` produces the full-resolution image. Newer Sony bodies (e.g. the
 /// A7 IV) store a full-size camera JPEG in IFD2 (`JpgFromRaw`) that ImageIO's
-/// thumbnail API never returns; decoding it takes ~60 ms and matches the
+/// thumbnail API never returns; decoding it takes ~35 ms and matches the
 /// camera's look exactly (Creative Look, DRO, lens corrections). Files without
 /// one fall back to a real raw development through `CIRAWFilter` (~560 ms warm).
 enum ARWImageLoader {

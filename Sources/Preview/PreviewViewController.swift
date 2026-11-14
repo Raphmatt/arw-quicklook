@@ -340,7 +340,6 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         styleChip(statusButton)
         statusButton.target = self
         statusButton.action = #selector(chipClicked)
-        statusButton.translatesAutoresizingMaskIntoConstraints = false
         setState(.preview)
     }
 
@@ -350,10 +349,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         afButton.target = self
         afButton.action = #selector(afClicked)
         afButton.isHidden = true
-        afButton.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    /// Reflect the overlay state in the chip (dimmed = overlay off).
     /// Chip reads e.g. "AF · Wide"; the tooltip adds focus mode and subject
     /// detection ("AF-C · Wide · Face/Eye AF"). Dimmed = overlay off.
     private func updateAFButton() {
@@ -371,6 +368,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     @objc private func afClicked() {
+        // Manual focus draws no frame — nothing to toggle, and the saved
+        // setting must not flip silently.
+        guard let info = focusInfo, !info.isManualFocus else { return }
         showFocus.toggle()
         SharedSettings.showFocusPoint = showFocus
         canvas.setFocusVisible(showFocus)
@@ -441,6 +441,18 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             showFocus = SharedSettings.showFocusPoint
             canvas.setFocus(focus, visible: showFocus, showZones: SharedSettings.showFocusZones)
             updateAFButton()
+        }
+
+        guard currentURL == url else { return } // superseded while awaiting
+
+        // Nothing to show yet (no embedded preview): wait for the full image
+        // here, so a file that can't be read at all throws and Quick Look
+        // shows its generic fallback instead of an empty panel.
+        if !hasEmbedded {
+            startFullRes(for: url)
+            await fullResTask?.value
+            if currentURL == url, !hasFull { throw CocoaError(.fileReadCorruptFile) }
+            return
         }
 
         // Full resolution starts right away — only rapid flipping stays on the

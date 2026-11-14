@@ -80,7 +80,7 @@ chip is hidden when a file has no focus data) or in the app under
 **ARWQuickLook › Settings**. The state is shared via
 `~/Library/Application Support/ARWQuickLook/settings.plist`; App Groups were
 deliberately avoided because with ad-hoc signing macOS 15+ re-prompts for
-group-container access on every rebuild, so all targets carry a sandbox
+group-container access on every rebuild, so the app and the Preview extension carry a sandbox
 temporary-exception for that folder instead.
 
 The `CIRAWFilter` fallback is nudged toward Sony's in-camera look:
@@ -137,9 +137,8 @@ Support/*.plist, *.entitlements      extension configuration & sandbox
 ## Diagnostics
 
 ```sh
-# Which generator serves ARW?
-qlmanage -m plugins | grep -i arw
-pluginkit -m -p com.apple.quicklook.preview | grep -i arw
+# Are both extensions registered and enabled? (+ = enabled)
+pluginkit -mAvv | grep -i -A1 "arwquicklook\."
 
 # Test a preview
 qlmanage -p "/path/to/file.ARW"
