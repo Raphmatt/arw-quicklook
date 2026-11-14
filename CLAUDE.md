@@ -27,6 +27,7 @@ XcodeGen project (`project.yml`): a host app plus two app extensions, Swift 5 mo
 
 - **Never push, create the GitHub repo or publish.** The owner does that. Commit only when asked, as `Raphmatt <71792812+Raphmatt@users.noreply.github.com>`.
 - **Don't run `make install` / `build.sh` unprompted.** They replace `/Applications/ARWQuickLook.app` and reset Quick Look. Use `make build` for compile checks.
+- **Compile only with `make build`, never `xcodebuild` into another DerivedData path.** Launch Services registers every built ARWQuickLook.app; unsigned copies then show up as extra entries in System Settings and can make Quick Look fail to load the preview. `make build` unregisters its product. Cleanup: `lsregister -dump | grep ARWQuickLook.app`, then `lsregister -u <path>` for everything outside `/Applications`.
 - **Nothing may visibly change in the preview while flipping through images.** No spinners, no changing text, no controls that resize or appear and disappear per file. State is shown by brightness; details go in tooltips.
 - **Never disable a button in the preview.** A disabled NSButton lets the click fall through to Quick Look, which opens the file in its default app. Dim it and make the action a no-op instead.
 - **Never render more pixels than the panel shows.** Upgrade on zoom-in or resize, never downgrade while visible, free on close.
