@@ -100,12 +100,21 @@ blocked by Gatekeeper, and a notarized build needs a paid Apple Developer ID.
 Build it yourself:
 
 ```sh
-./build.sh
+make install
 ```
 
-The script generates the project, builds (ad-hoc signed, no Apple Developer
-account needed), installs to `/Applications`, registers the extensions, and
-resets Quick Look.
+This runs `build.sh`, which generates the project, builds (ad-hoc signed, no
+Apple Developer account needed), installs to `/Applications`, registers the
+extensions, and resets Quick Look.
+
+Other targets (`make` lists them):
+
+| Target | Does |
+|---|---|
+| `make build` | Debug compile only, nothing signed or installed |
+| `make uninstall` | Remove the app from `/Applications` and reset Quick Look |
+| `make reset` | Reset Quick Look's generators and cache |
+| `make clean` | Remove build output and the generated Xcode project |
 
 Then **enable both extensions**:
 System Settings › General › Login Items & Extensions › **Quick Look** →
@@ -115,6 +124,7 @@ turn on `ARWThumbnail` and `ARWPreview`.
 
 ```
 project.yml                          XcodeGen definition (app + 2 extensions)
+Makefile, build.sh                   build / install / uninstall shortcuts
 Sources/Shared/ARWImageLoader.swift  embedded preview + full-size JPEG / raw decode
 Sources/Shared/SonyFocusReader.swift focus point from the Sony MakerNote + TIFF reader
 Sources/Shared/SharedSettings.swift  app ↔ extension settings (shared plist)
