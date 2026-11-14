@@ -1,6 +1,6 @@
 # Findings and learnings
 
-How ARW QuickLook came to work the way it does. Two rounds of work: 2026-06-10 and 2026-06-28 (macOS 26.5, Xcode 26.5, Swift 6.3, as recorded on 06-10), and 2026-11-14 on macOS 27.2. All test files came from a Sony A7 IV (33 MP, 7008×4672). Timings are wall-clock on an M1 Max. Claims marked *vendor* or *source* come from documentation, forum posts or other people's code and were not reproduced here.
+How ARW QuickLook came to work the way it does. Work happened on 2026-06-10 and 2026-06-28 (macOS 26.5, Xcode 26.5, Swift 6.3, as recorded on 06-10), and 2026-11-14 on macOS 27.2. All test files came from a Sony A7 IV (33 MP, 7008×4672). Timings are wall-clock on an M1 Max. Claims marked *vendor* or *source* come from documentation, forum posts or other people's code and were not reproduced here.
 
 ## 1. The goal
 
@@ -129,9 +129,9 @@ It matches the camera look exactly: Creative Look, DRO, lens corrections. The tr
 
 BGRA is 4 bytes per pixel, so one full surface is 131 MB at 33 MP and 245 MB at 61 MP (computed). Before 47be85e one full surface was held per open preview and kept after close.
 
-Now the source (camera JPEG or raw) is opened once and rendered at magnification × backing scale. A sharper render is requested when the current one would be upscaled by more than 10 %, with 30 % headroom, snapping to native at 0.85 or more. It is never downgraded while visible and is released in `viewWillDisappear`. Computed sizes: fit on a 5K display about 69 MB, scale 0.4 about 21 MB.
+Now the source (camera JPEG or raw) is opened once and rendered at magnification × backing scale. A sharper render is requested when the current one would be upscaled by more than 10 %, with 30 % headroom, snapping to native at 0.85 or more. It is never downgraded while visible and is released in `viewWillDisappear`. Computed sizes: fit on a 5K display about 40 MB (a 3:2 photo on a 16:9 screen is limited by its height, about 3900×2600 px; the Dock changes it a little), scale 0.4 about 21 MB. Measured by a CLI test: scale 0.73 gave 5116×3411 = 69 MB, which is a width-bound fit, not what the panel uses.
 
-Decodes run through an actor. A queued decode whose task was cancelled never starts; a generation counter keeps cancelled decodes from touching the UI. A running render cannot be aborted and is discarded.
+Decodes run through an actor. A queued decode whose task was cancelled never starts; a generation counter keeps cancelled decodes from touching the UI. A running render cannot be aborted; when it finishes it is still installed if it is sharper than what is shown for the same file, and dropped if it belongs to another file or to a preview that has closed.
 
 ### 5.4 Viewer details
 
@@ -170,7 +170,7 @@ Library scan of 4,053 ARWs:
 - Points and detections are square: Wide without a subject about 153×156; detected eyes and faces 101–483 px. By eye, 101 and 153 px frames sat on an eye, 216 and 438 px frames on a whole face.
 - No tag tells eye from face. AFTracking only says the feature was on: five Center + Face tracking files still store the 1073×808 zone. So point vs. area is decided by shape: aspect deviation above 8 % = area (drawn as corner brackets), otherwise a point (green box).
 - Manual focus stores the image centre as a fallback; 0x201B = 0 suppresses the frame.
-- Only the single final location is stored: no PDAF grid, no tracking history, no multiple subjects. Pre-2015 bodies keep AF data in an encrypted MakerNote section (*source*); they get no AF chip.
+- Only the single final location is stored: no PDAF grid, no tracking history, no multiple subjects. Pre-2015 bodies keep AF data in an encrypted MakerNote section (*source*); their AF button stays dimmed.
 
 ### 5.6 Controls
 

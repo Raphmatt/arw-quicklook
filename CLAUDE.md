@@ -50,7 +50,7 @@ XcodeGen project (`project.yml`): a host app plus two app extensions, Swift 5 mo
   - ImageIO's thumbnail API never returns it.
   - Orientation comes from IFD0 `0x0112`. Colour space comes from ExifIFD `0xA001`: 1 = sRGB; 0xFFFF plus Interop `R03` = Adobe RGB.
 - **Render cost:** about 8–14 ms warm per render (GPU submit), about 50 ms to open a source cold. The `CIRAWFilter` fallback takes 560–670 ms.
-- **Memory:** the surface is 4 B/px. 33 MP native is 131 MB; fit on 5K is about 69 MB.
+- **Memory:** the surface is 4 B/px. 33 MP native is 131 MB; fit on 5K is about 40 MB (3:2 on 16:9 is height-bound).
 - **Sony MakerNote:**
   - `0x2027` FocusLocation (unrotated frame); `0x2037` FocusFrameSize (flag 0x101).
   - `0x201B` focus mode, `0x201C` AF area setting, `0x2021` tracking (only "feature enabled").

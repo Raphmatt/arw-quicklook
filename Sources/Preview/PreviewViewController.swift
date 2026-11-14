@@ -41,7 +41,7 @@ final class ImageCanvasView: NSView {
     private var focusInfo: SonyFocusInfo?
     private var focusVisible = false
     private var zonesVisible = true
-    /// The canvas lives at native pixel size and is scaled down by the scroll
+    /// The canvas lives in the embedded preview's pixel coordinates and is scaled by the scroll
     /// view's magnification — divide by it so the outline stays ~2 pt on screen.
     private var focusScale: CGFloat = 1
 
@@ -233,6 +233,8 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private var renderedScale: CGFloat = 0
     private var pendingScale: CGFloat = 0
     private var inLiveMagnify = false
+    /// Between prepare and viewWillDisappear; no renders outside it.
+    private var isVisible = false
     private var state: LoadState = .preview
     private var hasEmbedded = false
     private var hasFull = false
@@ -273,7 +275,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         root.addSubview(scrollView)
 
         controls.layersButton.target = self
-        controls.layersButton.action = #selector(chipClicked)
+        controls.layersButton.action = #selector(layersClicked)
         controls.afButton.target = self
         controls.afButton.action = #selector(afClicked)
         root.addSubview(controls)
@@ -328,6 +330,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     @objc private func afClicked() {
+        // The toggle-type button flips its own state before this runs; always
+        // write the real state back, also when the click is a no-op.
+        defer { updateAFButton() }
         // Manual focus draws no frame — nothing to toggle, and the saved
         // setting must not flip silently.
         guard let info = focusInfo, !info.isManualFocus else { return }
@@ -343,9 +348,12 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     /// What's on screen, mirrored in the layers button's brightness only.
+    /// Loading counts as "full" visually: it arrives within milliseconds, and
+    /// dimming in between would flash the button on every image.
     private func setState(_ state: LoadState) {
         self.state = state
-        controls.setLayers(showingFull: state == .full, available: hasFull)
+        controls.setLayers(showingFull: state != .preview, available: hasFull || state == .loading,
+                           loading: state == .loading)
     }
 
     // MARK: - QLPreviewingController
@@ -354,19 +362,23 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         // Quick Look may re-prepare the same file (e.g. window state changes).
         // Keep what is loaded. If the panel was closed meanwhile (which
         // released the full image), render it again at the size now needed.
-        if url == currentURL, hasEmbedded || source != nil {
+        // (Without an embedded preview and without a render, nothing is shown:
+        // start over, so an unreadable file throws again.)
+        isVisible = true
+        if url == currentURL, hasEmbedded || hasFull {
             if !hasFull, fullResTask == nil { updateResolution() }
             return
         }
 
         releaseFull()
+        setState(.loading) // straight on, so the button doesn't dim between files
         currentURL = url
         isFitted = true
         hasEmbedded = false
         source = nil
         focusInfo = nil
         canvas.reset()
-        updateAFButton()
+        // The AF button keeps its look until this file's focus data is read.
 
         let px = targetPixelSize()
         async let focusTask = Task.detached(priority: .userInitiated) {
@@ -395,16 +407,18 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             focusInfo = focus
             showFocus = SharedSettings.showFocusPoint
             canvas.setFocus(focus, visible: showFocus, showZones: SharedSettings.showFocusZones)
-            updateAFButton()
         }
         guard currentURL == url else { return }
+        updateAFButton()
 
         // Nothing to show yet (no embedded preview): wait for the first render
         // here, so a file that can't be read at all throws and Quick Look
         // shows its generic fallback instead of an empty panel.
         if !hasEmbedded {
             updateResolution()
-            await fullResTask?.value
+            // A later resolution check may replace the task; wait for whichever
+            // is current until a render landed or none is left.
+            while currentURL == url, !hasFull, let task = fullResTask { await task.value }
             if currentURL == url, !hasFull { throw CocoaError(.fileReadCorruptFile) }
             return
         }
@@ -495,7 +509,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     /// screen. Never downgrades while visible (zooming back out keeps the
     /// sharper surface); `releaseFull()` frees it when the preview closes.
     private func updateResolution() {
-        guard let url = currentURL, let source, let needed = neededScale() else { return }
+        // Never render while closed: layout or backing changes can still
+        // arrive after viewWillDisappear.
+        guard isVisible, let url = currentURL, let source, let needed = neededScale() else { return }
         let have = max(renderedScale, pendingScale)
         guard needed > have * Self.upscaleTolerance else { return }
 
@@ -519,7 +535,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         }
     }
 
-    /// Re-render at most once a frame or so while the user scrolls/resizes.
+    /// Trailing 150 ms debounce while the user scrolls or resizes.
     private func scheduleResolutionCheck() {
         guard !inLiveMagnify, source != nil else { return }
         resolutionCheck?.cancel()
@@ -539,7 +555,7 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
             fullResTask = nil
         }
         guard let surface else {
-            if !hasFull, pendingScale == 0 { setState(.preview) } // render failed
+            if !hasFull, pendingScale == 0 { setState(.preview) } // render failed: dim
             return
         }
         guard scale > renderedScale else { return } // a newer, sharper one won
@@ -576,7 +592,10 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     }
 
     /// Toggle between the cached embedded and full-resolution versions.
-    @objc private func chipClicked() {
+    @objc private func layersClicked() {
+        // The toggle-type button flips its own state before this runs; always
+        // write the real state back, also when the click is a no-op.
+        defer { setState(state) }
         switch state {
         case .loading:
             return // render already running; swallow the click
@@ -624,6 +643,9 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
+        isVisible = false
+        inLiveMagnify = false // the end-of-pinch notification may never come
+        controls.resetHover()
         releaseFull() // don't hold a screen-sized (or larger) surface while closed
     }
 }

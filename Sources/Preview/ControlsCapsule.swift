@@ -1,5 +1,4 @@
 import Cocoa
-import os
 
 /// Bottom-left controls: two fixed-size icon buttons on a dark capsule.
 ///
@@ -15,7 +14,6 @@ final class ControlsCapsule: NSView {
     /// Autofocus overlay on/off.
     let afButton = NSButton()
 
-    private static let log = Logger(subsystem: "io.github.raphmatt.arwquicklook", category: "controls")
     private static let fadeIn: TimeInterval = 0.15
     private static let fadeOut: TimeInterval = 0.35
     private static let idleDelay: TimeInterval = 1.5
@@ -79,14 +77,15 @@ final class ControlsCapsule: NSView {
 
     /// Buttons always stay enabled: a disabled NSButton lets the click fall
     /// through to the Quick Look panel, which opens the file in its default app.
-    func setLayers(showingFull: Bool, available: Bool) {
+    func setLayers(showingFull: Bool, available: Bool, loading: Bool) {
         layersButton.image = NSImage(
             systemSymbolName: showingFull ? "square.2.layers.3d.fill" : "square.2.layers.3d",
             accessibilityDescription: "Full resolution")
         layersButton.state = showingFull ? .on : .off
         layersButton.alphaValue = !available ? Self.unavailableAlpha
             : showingFull ? Self.onAlpha : Self.offAlpha
-        layersButton.toolTip = !available ? "Full resolution is loading"
+        layersButton.toolTip = loading ? "Full resolution is loading"
+            : !available ? "Full resolution is not available for this file"
             : showingFull ? "Showing full resolution — click for the camera's embedded preview"
             : "Showing the camera's embedded preview — click for full resolution"
     }
@@ -98,7 +97,8 @@ final class ControlsCapsule: NSView {
             : on ? Self.onAlpha : Self.offAlpha
         let action = !available ? "" : on ? "Click to hide the focus frame" : "Click to show the focus frame"
         afButton.toolTip = [details, action].filter { !$0.isEmpty }.joined(separator: "\n")
-        afButton.setAccessibilityValue(details)
+        // VoiceOver reads on/off from the button state; mode details are help.
+        afButton.setAccessibilityHelp(details)
     }
 
     // MARK: - Reveal / hide
@@ -108,13 +108,23 @@ final class ControlsCapsule: NSView {
     /// e.g. if pointer movement never reaches the extension).
     private var restingAlpha: CGFloat {
         if NSWorkspace.shared.isVoiceOverEnabled { return 1 }
-        return SharedSettings.controlsAlwaysVisible ? 0.5 : 0
+        return Self.alwaysVisible ? 0.5 : 0
+    }
+
+    /// Read once per process: `reveal()` runs on every mouse move, and the
+    /// setting lives in a plist on disk.
+    private static let alwaysVisible = SharedSettings.controlsAlwaysVisible
+
+    /// The panel can close under the pointer, so `mouseExited` never comes.
+    func resetHover() {
+        hovering = false
+        hideWork?.cancel()
+        alphaValue = restingAlpha
     }
 
     /// Called on real pointer movement over the preview.
     func reveal() {
         guard restingAlpha < 1 else { return }
-        Self.log.debug("reveal")
         fade(to: 1, duration: Self.fadeIn)
         scheduleHide()
     }

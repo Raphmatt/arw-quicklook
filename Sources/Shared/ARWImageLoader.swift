@@ -60,7 +60,6 @@ enum ARWImageLoader {
         if let jpeg = fullSizeEmbeddedJPEG(url: url) {
             return FullSource(kind: .jpeg(jpeg), nativeSize: jpeg.extent.size)
         }
-        if Task.isCancelled { return nil }
         guard let output = rawFilter(url: url, scale: 1)?.outputImage else { return nil }
         return FullSource(kind: .raw(url), nativeSize: output.extent.size)
     }

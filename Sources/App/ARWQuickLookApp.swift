@@ -51,7 +51,7 @@ struct SettingsView: View {
                 }
             Text("Draws a green frame where the camera focused (a picked point "
                  + "or a detected face/eye), read from the Sony metadata in the "
-                 + "file. Can also be toggled with the AF chip in the Quick Look "
+                 + "file. Can also be toggled with the AF button in the Quick Look "
                  + "panel itself.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
